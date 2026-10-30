@@ -46,6 +46,18 @@ export class Player {
   private stridePhase = 0;
   /** [left, right] toe/foot bones of the real model (empty for placeholders) */
   private readonly feet: Object3D[] = [];
+  /** world positions/velocities of the feet, refreshed every simulation step */
+  readonly footPos = [new Vector3(), new Vector3()];
+  readonly footVel = [new Vector3(), new Vector3()];
+  private feetPrimed = false;
+  /** >0: the game is steering this player onto a loose ball he just knocked on (seconds left) */
+  autoChase = 0;
+  /** last local forward offset of each foot (dribble beat detection) */
+  readonly prevFootZ = [0, 0];
+  /** >0 while a sharp-touch cut animation plays over normal locomotion */
+  cutTimer = 0;
+  /** dribble touch timing read from the animation (shared, from the asset) */
+  readonly contacts: CharacterAsset['dribbleContacts'];
 
   constructor(
     scene: Scene,
@@ -79,6 +91,7 @@ export class Player {
     }
     if (this.feet.length !== 2) this.feet.length = 0;
 
+    this.contacts = asset.dribbleContacts;
     this.pos = this.root.position;
     this.animator = new Animator(body, asset.clips);
     scene.add(this.root);
@@ -105,6 +118,21 @@ export class Player {
   footPoint(out: Vector3, ahead = 0.45): Vector3 {
     forwardFromYaw(this.yaw, out).multiplyScalar(ahead);
     return out.add(this.pos);
+  }
+
+  /** Animated feet positions + velocities (call after the pose was updated for this step). */
+  sampleFeet(dt: number): void {
+    if (this.feet.length !== 2) return;
+    for (let i = 0; i < 2; i++) {
+      _v.setFromMatrixPosition(this.feet[i].matrixWorld);
+      if (this.feetPrimed) this.footVel[i].subVectors(_v, this.footPos[i]).divideScalar(Math.max(dt, 1e-4));
+      this.footPos[i].copy(_v);
+    }
+    this.feetPrimed = true;
+  }
+
+  get hasFeet(): boolean {
+    return this.feet.length === 2;
   }
 
   /** World position of foot i (0 = left, 1 = right) from the animated skeleton. False if unavailable. */
@@ -297,15 +325,21 @@ export class Player {
 
   private confine(): void {
     const m = PLAYER.radius;
-    this.pos.x = clamp(this.pos.x, -PITCH.width / 2 + m, PITCH.width / 2 - m);
-    this.pos.z = clamp(this.pos.z, GOAL.z + m, PITCH.length / 2 - m);
+    const x = clamp(this.pos.x, -PITCH.width / 2 + m, PITCH.width / 2 - m);
+    const z = clamp(this.pos.z, GOAL.z + m, PITCH.length / 2 - m);
+    if (x !== this.pos.x) this.vel.x = 0;
+    if (z !== this.pos.z) this.vel.z = 0;
+    this.pos.x = x;
+    this.pos.z = z;
   }
+
 
   // ---------------------------------------------------------------- visuals
 
   /** Pick the looping animation for free movement; one-shot actions set their own. */
   updateAnimation(dt: number, jockey: boolean): void {
-    if (this.state === 'free') {
+    if (this.cutTimer > 0) this.cutTimer -= dt;
+    if (this.state === 'free' && this.cutTimer <= 0) {
       const s = this.speed;
       let name: string;
       let ref: number;
@@ -318,6 +352,9 @@ export class Player {
       } else if (this.hasBall) {
         name = 'dribble';
         ref = PLAYER.runSpeed * PLAYER.dribbleSpeedFactor;
+      } else if (s < 1.8) {
+        name = 'walk';
+        ref = 1.4;
       } else if (s > PLAYER.runSpeed * 1.1) {
         name = 'sprint';
         ref = PLAYER.sprintSpeed;
@@ -326,7 +363,8 @@ export class Player {
         ref = PLAYER.runSpeed;
       }
       this.animator.play(name);
-      if (ref > 0) this.animator.setSpeedScale(clamp(s / ref, 0.6, 1.4));
+      if (ref > 0) this.animator.setSpeedScale(clamp(s / ref, 0.45, 1.4));
+      else if (name === 'idle' && this.animator.playingClip === 'idle_soccer') this.animator.setSpeedScale(0.55);
     }
     this.animator.update(dt);
     if (this.isPlaceholder) this.animatePlaceholder(dt);
