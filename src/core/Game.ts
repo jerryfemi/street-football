@@ -67,8 +67,8 @@ export class Game {
     s.background = new Color(COLORS.sky);
     s.fog = new Fog(COLORS.sky, 25, 60);
 
-    s.add(new HemisphereLight(0xbfd7ff, 0x1a1f2b, 0.9));
-    const sun = new DirectionalLight(0xfff1dc, 2.2);
+    s.add(new HemisphereLight(0xdbe7ff, 0x3a4250, 1.6));
+    const sun = new DirectionalLight(0xfff1dc, 3.0);
     sun.position.set(8, 16, 6);
     sun.castShadow = true;
     sun.shadow.mapSize.set(RENDER.shadowMapSize, RENDER.shadowMapSize);
@@ -95,6 +95,7 @@ export class Game {
     this.attacker = new Player(this.scene, asset, 'attacker', COLORS.attackerKit);
     this.defender = new Player(this.scene, asset, 'defender', COLORS.defenderKit);
     this.human = new HumanController(this.input, this.cam.camera, this.attacker);
+    this.human.opponent = this.defender;
     this.ai = new DefenderAI(this.defender, this.attacker, this.ball);
     this.match = new Match(this.ball, this.attacker, this.defender, this.ai, {
       onMessage: (t, tone) => this.hud.message(t, tone),
@@ -121,14 +122,13 @@ export class Game {
       const att = this.human.update(h);
       const def = this.ai.update(h);
       this.match.step(h, att, def);
+      this.animateStep(h);
       this.accumulator -= h;
       steps++;
       if (steps === 1) this.input.endFrame(); // edges consumed by the first step
     }
 
     // Visuals at display rate
-    this.attacker.updateAnimation(dt, false);
-    this.defender.updateAnimation(dt, this.ai.intent.jockey);
     this.ball.sync();
     this.cam.update(dt, this.attacker.pos, this.ball.pos);
     this.hud.setPower(this.human.charge);
@@ -143,12 +143,26 @@ export class Game {
    * From the console / Playwright:  game.simPaused = true; game.advance(1.5)
    */
   simPaused = false;
+  /**
+   * Animation runs inside the fixed step too, so the feet the ball reacts to are exactly the
+   * feet on screen (dribble beats, skill foot pushes).
+   */
+  private animateStep(h: number): void {
+    this.attacker.updateAnimation(h, false);
+    this.defender.updateAnimation(h, this.ai.intent.jockey);
+    this.attacker.root.updateMatrixWorld(true);
+    this.defender.root.updateMatrixWorld(true);
+    this.attacker.sampleFeet(h);
+    this.defender.sampleFeet(h);
+  }
+
   advance(seconds: number): void {
     const h = RENDER.fixedStep;
     for (let t = 0; t < seconds; t += h) {
       const att = this.human.update(h);
       const def = this.ai.update(h);
       this.match.step(h, att, def);
+      this.animateStep(h);
       this.input.endFrame();
     }
   }

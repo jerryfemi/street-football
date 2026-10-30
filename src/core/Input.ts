@@ -44,11 +44,11 @@ export class Input {
 
   /** Raw stick: x = right, y = forward (screen-up). Not normalised. */
   axisX(): number {
-    return (this.isDown('KeyD', 'ArrowRight') ? 1 : 0) - (this.isDown('KeyA', 'ArrowLeft') ? 1 : 0);
+    return (this.isDown('KeyD') ? 1 : 0) - (this.isDown('KeyA') ? 1 : 0);
   }
 
   axisY(): number {
-    return (this.isDown('KeyW', 'ArrowUp') ? 1 : 0) - (this.isDown('KeyS', 'ArrowDown') ? 1 : 0);
+    return (this.isDown('KeyW') ? 1 : 0) - (this.isDown('KeyS') ? 1 : 0);
   }
 
   endFrame(): void {
