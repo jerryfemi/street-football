@@ -3,7 +3,7 @@ import { BALL, BLOCK, DRIBBLE, GOAL, PLAYER, ROUND, SHOT, SLIDE, TACKLE } from '
 import type { Ball } from '../ball/Ball';
 import type { DefenderAI } from '../controllers/DefenderAI';
 import type { PlayerIntent } from '../controllers/types';
-import { damp, forwardFromYaw, localToWorld, rightFromYaw, samplePath } from '../core/math';
+import { damp, forwardFromYaw, localToWorld, rightFromYaw } from '../core/math';
 import type { Player } from '../player/Player';
 import { SKILLS } from '../skills/skills';
 
@@ -18,8 +18,6 @@ const _a = new Vector3();
 const _b = new Vector3();
 const _f = new Vector3();
 const _r = new Vector3();
-const _p = { x: 0, z: 0 };
-const ORIGIN = new Vector3();
 
 /**
  * Rules of a street 1v1 duel + every ball/player interaction:
@@ -36,8 +34,16 @@ export class Match {
   phaseTime = 0;
   shotClock: number = ROUND.shotClock;
   readonly score = { attacker: 0, defender: 0 };
-  private touchCooldown = 0;
-  private lastFoot = 1;
+  private beatTimer = 0;
+  private clock = 0;
+  private lastBeatAt = 0;
+  private lastTouchAt = 0;
+  private beatSeen = false;
+  private lastBeatX = 0.1;
+  /** measured seconds between dribble beats (adapts to the clip and its playback speed) */
+  private beatGap = 0.43;
+  /** total ball touches (debug/telemetry) */
+  touches = 0;
   private tackleHit = false;
   private missedTackle = false;
   private readonly idle: PlayerIntent = {
@@ -72,6 +78,7 @@ export class Match {
 
   step(dt: number, attIntent: PlayerIntent, defIntent: PlayerIntent): void {
     this.phaseTime += dt;
+    this.clock += dt;
     const { attacker, defender, ball } = this;
 
     // ---------------- phase logic
@@ -113,7 +120,9 @@ export class Match {
     attacker.hasBall = ball.owner === attacker;
     defender.hasBall = ball.owner === defender;
 
-    // ---------------- actions
+    // ---------------- automation + actions
+    if (attIntent !== this.idle) this.assist(attacker, attIntent, dt);
+    if (attIntent.sharpTouch && this.phase === 'live') this.sharpTouch(attacker, attIntent.sharpTouch.x, attIntent.sharpTouch.z);
     this.applyActions(attacker, attIntent);
     if (this.phase === 'live') this.applyActions(defender, defI);
 
@@ -183,115 +192,256 @@ export class Match {
     this.listener.onMessage(text, kind === 'goal' ? 'good' : 'bad');
   }
 
-  /** Kinematic ball while someone owns it: dribble offset, or the skill's scripted path. */
+  /**
+   * The ball while someone owns it. Never glued: it always has a real position + velocity and
+   * rolls with turf friction. It only changes course on TOUCHES:
+   *  - dribbling: touches happen on the beats of the dribble animation (read from the clip),
+   *    and each touch is sized so the ball rolls back under the foot exactly at the next beat
+   *  - skills: set the ball, let the animated feet push it, then the decisive "take" touch
+   *  - standing: the player steps up to the ball and traps it under the sole
+   */
   private carryBall(p: Player, dt: number): void {
     const ball = this.ball;
-    const skill = p.state === 'skill' ? p.skill : null;
+    this.roll(dt, p.state === 'skill' ? DRIBBLE.skillFriction : DRIBBLE.friction);
 
-    if (skill?.ballPath) {
-      samplePath(skill.ballPath, p.skillT, _p);
-      localToWorld(p.skillOrigin, p.skillYaw, p.skillMirror ? -_p.x : _p.x, _p.z, _a);
-      ball.pos.set(_a.x, BALL.radius, _a.z);
+    if (p.state === 'skill' && p.skill) {
+      this.skillBall(p, dt);
       return;
     }
-    if (skill?.release && !p.skillReleased && p.skillT >= skill.release.t) {
-      p.skillReleased = true;
-      const vx = p.skillMirror ? -skill.release.vx : skill.release.vx;
-      localToWorld(ORIGIN, p.skillYaw, vx, skill.release.vz, _a);
-      ball.kick(p, _a.x, skill.release.vy ?? 0, _a.z);
-      ball.noPickupTimer = 0.25;
-      return;
-    }
-
     if (p.state === 'shoot') {
-      // Set the ball for the strike: settle it just in front of the kicking foot.
-      forwardFromYaw(p.yaw, _a).multiplyScalar(0.35).add(p.pos);
-      const k = damp(16, dt);
+      // Settle it for the strike in front of the kicking foot.
+      forwardFromYaw(p.yaw, _a).multiplyScalar(0.38).add(p.pos);
+      const k = damp(14, dt);
       ball.pos.x += (_a.x - ball.pos.x) * k;
       ball.pos.z += (_a.z - ball.pos.z) * k;
-      ball.pos.y = BALL.radius;
-      ball.vel.set(0, 0, 0);
+      ball.vel.multiplyScalar(0.5);
       return;
     }
     this.dribble(p, dt);
   }
 
-  /**
-   * Touch-based dribbling. The ball is NOT glued to the player: each touch knocks it ahead
-   * with real velocity, it rolls and slows on the turf, the player catches up and touches again.
-   * Touches fire when an animated foot actually sweeps into the ball (so they line up with the
-   * dribble clip), or when the ball falls too close / drifts sideways (safety net).
-   * Faster = bigger touches = more of a gap for a defender to nick it.
-   */
-  private dribble(p: Player, dt: number): void {
+  /** Free rolling for an owned ball (owned balls skip Ball.step's physics). */
+  private roll(dt: number, friction: number): void {
     const ball = this.ball;
     const v = ball.vel;
-    forwardFromYaw(p.yaw, _f);
-    rightFromYaw(p.yaw, _r);
-
-    // roll
+    v.y = 0;
     ball.pos.addScaledVector(v, dt);
     ball.pos.y = BALL.radius;
-    v.y = 0;
-    const fr = Math.max(0, 1 - DRIBBLE.friction * dt);
-    v.x *= fr;
-    v.z *= fr;
-    if (this.touchCooldown > 0) this.touchCooldown -= dt;
+    const f = Math.max(0, 1 - friction * dt);
+    v.x *= f;
+    v.z *= f;
+  }
+
+  /** Velocity that makes a ball (with exponential friction k) cover `dist` in `t` seconds. */
+  private static launchSpeed(dist: number, t: number, k: number): number {
+    return (dist * k) / Math.max(1e-3, 1 - Math.exp(-k * Math.max(0.05, t)));
+  }
+
+  /** Send the ball so it rolls to world point (tx, tz) in `t` seconds. */
+  private sendBallTo(tx: number, tz: number, t: number, friction: number): void {
+    const ball = this.ball;
+    const dx = tx - ball.pos.x;
+    const dz = tz - ball.pos.z;
+    const d = Math.hypot(dx, dz);
+    if (d < 1e-3) {
+      ball.vel.set(0, 0, 0);
+      return;
+    }
+    const sp = Math.min(DRIBBLE.maxTouchSpeed, Match.launchSpeed(d, t, friction));
+    ball.vel.set((dx / d) * sp, 0, (dz / d) * sp);
+  }
+
+  private dribble(p: Player, dt: number): void {
+    const ball = this.ball;
+    forwardFromYaw(p.yaw, _f);
+    rightFromYaw(p.yaw, _r);
+    const s = p.speed;
+
+    // where a foot meets the ball right now
+    _a.copy(p.pos).addScaledVector(_f, DRIBBLE.contactZ);
+    const toContact = Math.hypot(ball.pos.x - _a.x, ball.pos.z - _a.z);
+
+    if (s < DRIBBLE.standSpeed) {
+      // Standing: ball dies on the turf and is trapped under the sole when he reaches it.
+      const k = Math.max(0, 1 - DRIBBLE.trapFriction * dt);
+      ball.vel.x *= k;
+      ball.vel.z *= k;
+      _b.copy(p.pos).addScaledVector(_f, 0.36);
+      if (Math.hypot(ball.pos.x - _b.x, ball.pos.z - _b.z) < 0.22) ball.vel.multiplyScalar(0.6);
+      return;
+    }
+
+    // Beat: an animated foot swinging forward through the contact line, low to the ground.
+    // Read live from the skeleton, so it is in sync with whatever the legs are doing on screen.
+    let beat = false;
+    let nextX = -this.lastBeatX;
+    if (p.hasFeet) {
+      for (let k = 0; k < 2; k++) {
+        const fp = p.footPos[k];
+        const lz = (fp.x - p.pos.x) * _f.x + (fp.z - p.pos.z) * _f.z;
+        const prev = p.prevFootZ[k];
+        p.prevFootZ[k] = lz;
+        if (prev < DRIBBLE.contactZ && lz >= DRIBBLE.contactZ && fp.y < DRIBBLE.footLift + 0.1) {
+          // only a real touch if this foot is actually at the ball
+          if (Math.hypot(fp.x - ball.pos.x, fp.z - ball.pos.z) < DRIBBLE.footReach) beat = true;
+          this.beatSeen = true;
+          const lx = (fp.x - p.pos.x) * _r.x + (fp.z - p.pos.z) * _r.z;
+          this.lastBeatX = lx;
+          nextX = -lx; // the other foot takes the next touch
+        }
+      }
+    } else {
+      this.beatTimer -= dt;
+      if (this.beatTimer <= 0) {
+        beat = true;
+        this.beatTimer = DRIBBLE.fallbackBeat;
+      }
+    }
+    if (this.beatSeen) {
+      this.beatSeen = false;
+      const gap = this.clock - this.lastBeatAt;
+      if (gap > 0.15 && gap < 1.2) this.beatGap += (gap - this.beatGap) * 0.5;
+      this.lastBeatAt = this.clock;
+    }
+    const next = this.beatGap;
 
     const rx = ball.pos.x - p.pos.x;
     const rz = ball.pos.z - p.pos.z;
     const ahead = rx * _f.x + rz * _f.z;
-    const side = rx * _r.x + rz * _r.z;
-    const s = p.speed;
+    const urgent = ahead < 0.12; // he's running onto it - must touch now
 
-    if (s < DRIBBLE.standSpeed) {
-      // Standing on the ball: it settles just in front of the stronger foot.
-      _a.copy(p.pos).addScaledVector(_f, 0.4).addScaledVector(_r, 0.09 * this.lastFoot);
-      if (Math.hypot(_a.x - ball.pos.x, _a.z - ball.pos.z) > 0.6) {
-        // Stopped with the ball still running on: let it die on the turf (never roll it back to him).
-        const k = Math.max(0, 1 - 4 * dt);
-        v.x *= k;
-        v.z *= k;
-        return;
-      }
-      v.x += ((_a.x - ball.pos.x) * 28 - v.x * 9) * dt;
-      v.z += ((_a.z - ball.pos.z) * 28 - v.z * 9) * dt;
+    const ready = this.clock - this.lastTouchAt > DRIBBLE.minTouchGap;
+    if (ready && ((beat && toContact < DRIBBLE.reach) || (urgent && toContact < DRIBBLE.reach + 0.2))) {
+      this.lastTouchAt = this.clock;
+      // Touch: aim the ball at where the foot will be at the NEXT beat.
+      const t = Math.max(DRIBBLE.minBeat, next);
+      _b.copy(p.pos).addScaledVector(p.vel, t).addScaledVector(_f, DRIBBLE.contactZ + 0.05).addScaledVector(_r, nextX * 0.7);
+      this.sendBallTo(_b.x, _b.z, t, DRIBBLE.friction);
+      this.touches++;
+    }
+  }
+
+  /** Ball handling during a skill: set → animated feet → decisive take. */
+  private skillBall(p: Player, dt: number): void {
+    const def = p.skill!;
+    const ball = this.ball;
+    const t = p.skillT;
+    const mx = p.skillMirror ? -1 : 1;
+
+    // 1. SET: ease the ball onto the spot the move is built around
+    if (def.set && p.stateTime < DRIBBLE.setTime) {
+      localToWorld(p.pos, p.yaw, def.set.x * mx, def.set.z, _a);
+      const k = damp(18, dt);
+      ball.pos.x += (_a.x - ball.pos.x) * k;
+      ball.pos.z += (_a.z - ball.pos.z) * k;
+      ball.vel.multiplyScalar(0.3);
       return;
     }
 
-    // never let the ball end up under/behind the player
-    if (ahead < 0.15) ball.pos.addScaledVector(_f, 0.15 - ahead);
+    // 3. TAKE
+    if (!p.skillReleased && t >= def.take.t) {
+      p.skillReleased = true;
+      localToWorld(p.skillOrigin, p.skillYaw, def.take.x * mx, def.take.z, _a);
+      const arrive = def.take.arriveIn ?? Math.max(0.25, (1 - def.take.t) * def.duration + 0.15);
+      this.sendBallTo(_a.x, _a.z, arrive, DRIBBLE.friction);
+      if (def.take.chase) {
+        ball.kick(p, ball.vel.x, 0, ball.vel.z);
+        ball.noPickupTimer = 0.2;
+        p.autoChase = 1.6;
+      }
+      this.touches++;
+      return;
+    }
 
-    let touch = ahead < DRIBBLE.minAhead + s * 0.02 || Math.abs(side) > DRIBBLE.maxSide;
-    let foot = -this.lastFoot;
-    if (!touch && ahead < DRIBBLE.footReachAhead) {
-      // animated foot contact
+    // 2. FEET: an animated foot sweeping low through the ball pushes it
+    if (def.footPush && !p.skillReleased && p.hasFeet) {
       for (let i = 0; i < 2; i++) {
-        if (p.footWorld(i, _b) && Math.hypot(_b.x - ball.pos.x, _b.z - ball.pos.z) < DRIBBLE.footContact) {
-          touch = true;
-          foot = i === 0 ? -1 : 1;
-          break;
-        }
+        const fp = p.footPos[i];
+        const fv = p.footVel[i];
+        if (fp.y > DRIBBLE.footLift) continue;
+        const dx = ball.pos.x - fp.x;
+        const dz = ball.pos.z - fp.z;
+        const d = Math.hypot(dx, dz);
+        if (d > DRIBBLE.footContact || d < 1e-4) continue;
+        const into = (fv.x * dx + fv.z * dz) / d; // foot speed toward the ball
+        if (into < 0.4) continue;
+        const sp = Math.min(DRIBBLE.maxFootPush, Math.hypot(fv.x, fv.z));
+        const fl = Math.hypot(fv.x, fv.z) || 1;
+        ball.vel.set((fv.x / fl) * sp, 0, (fv.z / fl) * sp);
+        ball.pos.x = fp.x + (dx / d) * DRIBBLE.footContact;
+        ball.pos.z = fp.z + (dz / d) * DRIBBLE.footContact;
+      }
+      // never let a fake lose the ball
+      const rx = ball.pos.x - p.pos.x;
+      const rz = ball.pos.z - p.pos.z;
+      const r = Math.hypot(rx, rz);
+      if (r > DRIBBLE.skillLeash) {
+        ball.pos.x = p.pos.x + (rx / r) * DRIBBLE.skillLeash;
+        ball.pos.z = p.pos.z + (rz / r) * DRIBBLE.skillLeash;
+        ball.vel.multiplyScalar(0.2);
       }
     }
+  }
 
-    if (touch && this.touchCooldown <= 0) {
-      this.lastFoot = foot;
-      const push = DRIBBLE.pushBase + s * DRIBBLE.pushPerSpeed;
-      v.x = p.vel.x + _f.x * push - _r.x * side * DRIBBLE.recentre + _r.x * foot * 0.2;
-      v.z = p.vel.z + _f.z * push - _r.z * side * DRIBBLE.recentre + _r.z * foot * 0.2;
-      this.touchCooldown = DRIBBLE.minTouchGap;
-    }
-
-    // leash: a dribble touch never runs away from you completely
-    if (ahead > DRIBBLE.maxLead) {
-      const along = v.x * _f.x + v.z * _f.z;
-      const excess = along - Math.min(s, along);
-      if (excess > 0) {
-        v.x -= _f.x * excess;
-        v.z -= _f.z * excess;
+  /**
+   * Automation layer for the human attacker, applied to his intent before he moves:
+   *  - after a knock-on he sprints onto the ball by himself
+   *  - while dribbling, his line bends toward the ball so he can't run away from it
+   *  - no input + ball a step away: he steps up to it
+   */
+  private assist(p: Player, i: PlayerIntent, dt: number): void {
+    const ball = this.ball;
+    if (p.autoChase > 0) {
+      p.autoChase -= dt;
+      if (ball.owner === p || (ball.owner && ball.owner !== p)) {
+        p.autoChase = 0;
+      } else {
+        const lead = 0.25;
+        i.moveX = ball.pos.x + ball.vel.x * lead - p.pos.x;
+        i.moveZ = ball.pos.z + ball.vel.z * lead - p.pos.z;
+        i.sprint = true;
+        return;
       }
     }
+    if (ball.owner !== p || p.state !== 'free') return;
+    const dx = ball.pos.x - p.pos.x;
+    const dz = ball.pos.z - p.pos.z;
+    const d = Math.hypot(dx, dz);
+    const inLen = Math.hypot(i.moveX, i.moveZ);
+    if (inLen < 0.1) {
+      if (d > 0.5) {
+        const k = Math.min(1, (d - 0.35) * 1.2) * 0.55;
+        i.moveX = (dx / d) * k;
+        i.moveZ = (dz / d) * k;
+        i.sprint = false;
+      }
+      return;
+    }
+    // bend the run toward the ball when it is drifting off his line
+    const cross = Math.abs((i.moveX * dz - i.moveZ * dx) / (inLen * Math.max(d, 1e-3)));
+    if (d > 0.7 && cross > 0.35) {
+      const w = Math.min(0.7, (cross - 0.35) * 1.5);
+      i.moveX = i.moveX / inLen * (1 - w) + (dx / d) * w;
+      i.moveZ = i.moveZ / inLen * (1 - w) + (dz / d) * w;
+    }
+  }
+
+  /** Sharp touch: a quick cut that knocks the ball into the new direction (Dash tap + direction). */
+  private sharpTouch(p: Player, dirX: number, dirZ: number): void {
+    const ball = this.ball;
+    if (ball.owner !== p || p.state !== 'free') return;
+    const l = Math.hypot(dirX, dirZ);
+    if (l < 0.1) return;
+    if (Math.hypot(ball.pos.x - p.pos.x, ball.pos.z - p.pos.z) > 1.1) return;
+    const nx = dirX / l;
+    const nz = dirZ / l;
+    p.yaw = Math.atan2(nx, nz);
+    const sp = p.speed;
+    p.vel.set(nx * sp * 0.7, 0, nz * sp * 0.7);
+    this.sendBallTo(p.pos.x + nx * 1.6, p.pos.z + nz * 1.6, 0.45, DRIBBLE.friction);
+    p.animator.play('cut', { once: true, duration: 0.45, fade: 0.06 });
+    p.cutTimer = 0.45;
+    this.touches++;
   }
 
   private resolveKick(p: Player): void {
@@ -390,6 +540,7 @@ export class Match {
       best.skill = null;
       best.setState('free');
     }
+    best.autoChase = 0;
     if (incoming > 5 && best.speed < 2 && best.canAct) {
       best.setState('receive');
       best.animator.play('receive', { once: true, duration: 0.5, fade: 0.1 });

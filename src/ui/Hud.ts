@@ -28,7 +28,7 @@ export class Hud {
 
     const help = el('div', 'hud-help');
     help.innerHTML =
-      '<b>WASD</b> move · <b>Shift</b> sprint · hold <b>Space</b> shoot · skills: <b>E</b> stepover <b>Q</b> feint <b>C</b> elastico <b>V</b> samba <b>G</b> shoulder <b>X</b> drag <b>R</b> knock-on (+<b>A</b> = other way)';
+      '<b>WASD</b> dribble · <b>Shift</b> hold dash / tap sharp touch · <b>Space</b> shoot · <b>Arrows</b> skills: ←/→ stepover · ↑ knock-on · ↓ drag · ←← feint · ←→ elastico · ↓→ samba';
 
     this.loadingEl = el('div', 'hud-loading');
     this.loadingEl.textContent = 'Loading…';
