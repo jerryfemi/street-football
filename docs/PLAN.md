@@ -41,6 +41,14 @@ Tick boxes as you go so whoever picks this up next (you, Gemini, Claude) knows w
 - [ ] Add skills: roulette (spin away from tackle), nutmeg / panna (ball through defender's legs: special win condition!), elastico, rainbow flick
 - [ ] Skill input: hold a "skill" button + direction (like FIFA Street's right stick), so you don't need one key per skill
 
+## M2.5: Control rework (2026-10-30)
+- [x] Ball never glued: touches are timed to the dribble animation's real foot beats (read live from the toe bones)
+- [x] Skills: set the ball, animated feet push it, decisive "take" touch; knock-ons auto-chase
+- [x] eFootball-style input: arrow-key flick gestures for skills, Shift tap = sharp touch, assists (step up to the ball, bend run toward it)
+- [x] Walls stop velocity; brighter lighting; closer camera; calmer defender
+- [ ] Calm idle (Mixamo "Breathing Idle" → idle_calm.fbx), "Walking" → walk.fbx, jog-without-ball → run.fbx, strafes, celebration
+- [ ] Touch controls: left stick, Dash, Shoot, right-side swipe = skill flick
+
 ## M3: Mobile + game feel
 - [ ] Touch controls: virtual joystick (left), Shoot (hold), Skill, Sprint buttons (right). Feed the same `Input` API
 - [ ] Camera polish: pull back on sprint, slight zoom on skills, shake on post hits, slow-mo on panna/nutmeg

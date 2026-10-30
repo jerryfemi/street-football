@@ -22,16 +22,23 @@ npm run build      # typecheck + production build into dist/
 npm run preview    # serve the production build
 ```
 
-## Controls (keyboard, for now)
+## Controls (keyboard, eFootball-style)
+
+You steer and pick the move; the game does the footwork (touches, first touch, chasing a knock-on, stepping up to the ball).
 
 | Key | Action |
 |---|---|
-| **W A S D** / arrows | move (camera-relative) |
-| **Shift** | sprint |
-| **Space** (hold, release) | charge + shoot. Hold A/D while releasing to aim left/right |
-| **E / Q / C / V / G / X** | stepover / body feint / elastico / samba roll / drop shoulder / drag stepover. Hold **A** to mirror |
-| **R** | knock-on: push it past him and run. Hold **A** to go left |
-| **F** / **Shift+F** / **B** | tackle / slide tackle / block (when you're defending; AI defends for now) |
+| **W A S D** | move / dribble (small touches timed to the feet automatically) |
+| **Shift** hold | dash dribble |
+| **Shift** tap + direction | sharp touch (quick cut) |
+| **Space** hold → release | shoot (A/D at release aims) |
+| **← / →** | stepover, going that way |
+| **↑** | knock-on and auto-chase (becomes a drop-shoulder burst if the defender is right in front) |
+| **↓** | drag stepover |
+| **←← / →→** | body feint that way |
+| **← → / → ←** | elastico, finishing in the second direction |
+| **↓ then ← / →** | samba roll that way |
+| **F** / **Shift+F** / **B** | tackle / slide tackle / block (when defending) |
 
 Touch controls are on the plan (see `docs/PLAN.md`, M3).
 
