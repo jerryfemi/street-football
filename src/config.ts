@@ -58,6 +58,12 @@ export const DRIBBLE = {
   trapFriction: 6,
   /** a foot crossing this far in front of the body (m) is a dribble beat */
   contactZ: 0.28,
+  /** owned ball further than this from the player = lost touch (ball goes loose, he chases it) */
+  loseDistance: 2.2,
+  /** turning with the ball: auto touch when the ball is within this range and off his line */
+  turnReach: 1.4,
+  /** ...and its direction is less than this cosine of his facing (~55°) */
+  turnCos: 0.57,
   /** a beat only touches the ball if it is within this distance of the foot's contact point */
   reach: 1.0,
   /** min seconds between two dribble touches */

@@ -140,7 +140,15 @@ export class Match {
     this.resolveTackle();
 
     if (ball.owner) {
-      this.carryBall(ball.owner, dt);
+      const o = ball.owner;
+      this.carryBall(o, dt);
+      // Lost touch: ball got away from him - it's loose now and he goes after it automatically.
+      if (ball.owner === o && o.state === 'free' && Math.hypot(ball.pos.x - o.pos.x, ball.pos.z - o.pos.z) > DRIBBLE.loseDistance) {
+        ball.owner = null;
+        ball.lastTouch = o;
+        ball.noPickupTimer = 0;
+        if (o === attacker) o.autoChase = 1.2;
+      }
       ball.step(dt);
     } else {
       const ev = ball.step(dt);
@@ -307,6 +315,16 @@ export class Match {
     const rx = ball.pos.x - p.pos.x;
     const rz = ball.pos.z - p.pos.z;
     const ahead = rx * _f.x + rz * _f.z;
+    // Turning: once he's facing well away from where the ball is rolling, take it with him.
+    const bd = Math.hypot(rx, rz);
+    if (bd > 0.2 && bd < DRIBBLE.turnReach && this.clock - this.lastTouchAt > DRIBBLE.minTouchGap && ahead / bd < DRIBBLE.turnCos) {
+      this.lastTouchAt = this.clock;
+      const t = Math.max(DRIBBLE.minBeat, this.beatGap);
+      _b.copy(p.pos).addScaledVector(p.vel, t).addScaledVector(_f, DRIBBLE.contactZ + 0.05);
+      this.sendBallTo(_b.x, _b.z, t, DRIBBLE.friction);
+      this.touches++;
+      return;
+    }
     const urgent = ahead < 0.12; // he's running onto it - must touch now
 
     const ready = this.clock - this.lastTouchAt > DRIBBLE.minTouchGap;
@@ -421,8 +439,9 @@ export class Match {
     }
     // bend the run toward the ball when it is drifting off his line
     const cross = Math.abs((i.moveX * dz - i.moveZ * dx) / (inLen * Math.max(d, 1e-3)));
-    if (d > 0.7 && cross > 0.35) {
-      const w = Math.min(0.7, (cross - 0.35) * 1.5);
+    const along = (i.moveX * dx + i.moveZ * dz) / (inLen * Math.max(d, 1e-3));
+    if (d > 0.7 && (cross > 0.35 || along < 0)) {
+      const w = along < 0 ? 0.9 : Math.min(0.75, (cross - 0.35) * 1.6);
       i.moveX = i.moveX / inLen * (1 - w) + (dx / d) * w;
       i.moveZ = i.moveZ / inLen * (1 - w) + (dz / d) * w;
     }
