@@ -22,6 +22,8 @@ export interface PlayerIntent {
   slide?: boolean;
   /** Drop into a blocking stance (vs an incoming shot). */
   block?: boolean;
+  /** Sharp touch: quick cut that knocks the ball into this world direction. */
+  sharpTouch?: { x: number; z: number } | null;
 }
 
 export function emptyIntent(): PlayerIntent {
@@ -40,4 +42,5 @@ export function clearIntent(i: PlayerIntent): void {
   i.tackle = false;
   i.slide = false;
   i.block = false;
+  i.sharpTouch = null;
 }

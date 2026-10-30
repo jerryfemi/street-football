@@ -28,11 +28,11 @@ export interface DefenderTuning {
 }
 
 export const DEFENDER_NORMAL: DefenderTuning = {
-  standOffNear: 1.4,
-  standOffFar: 2.8,
-  reaction: 0.25,
+  standOffNear: 1.7,
+  standOffFar: 3.2,
+  reaction: 0.4,
   biteChance: 0.7,
-  tackleRate: 1.6,
+  tackleRate: 1.1,
   blockChance: 0.6,
   slideRate: 2.5,
 };
