@@ -94,6 +94,10 @@ export class HumanController {
       i.tackle = true;
       i.slide = shiftHeld;
     }
+    if (inp.wasPressed('Slide')) {
+      i.tackle = true;
+      i.slide = true;
+    }
     if (inp.wasPressed('KeyB')) i.block = true;
     return i;
   }
