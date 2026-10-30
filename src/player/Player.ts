@@ -58,6 +58,7 @@ export class Player {
   cutTimer = 0;
   /** dribble touch timing read from the animation (shared, from the asset) */
   readonly contacts: CharacterAsset['dribbleContacts'];
+  readonly skillSpots: CharacterAsset['skillSpots'];
 
   constructor(
     scene: Scene,
@@ -92,6 +93,7 @@ export class Player {
     if (this.feet.length !== 2) this.feet.length = 0;
 
     this.contacts = asset.dribbleContacts;
+    this.skillSpots = asset.skillSpots;
     this.pos = this.root.position;
     this.animator = new Animator(body, asset.clips);
     scene.add(this.root);

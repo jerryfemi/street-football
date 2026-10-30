@@ -330,7 +330,10 @@ export class Match {
 
     // 1. SET: ease the ball onto the spot the move is built around
     if (def.set && p.stateTime < DRIBBLE.setTime) {
-      localToWorld(p.pos, p.yaw, def.set.x * mx, def.set.z, _a);
+      // measured spot from the clip wins (the clip itself isn't mirrored, so neither is its spot)
+      const spot = p.skillSpots.get(def.anim);
+      if (spot) localToWorld(p.pos, p.yaw, spot.x, spot.z, _a);
+      else localToWorld(p.pos, p.yaw, def.set.x * mx, def.set.z, _a);
       const k = damp(18, dt);
       ball.pos.x += (_a.x - ball.pos.x) * k;
       ball.pos.z += (_a.z - ball.pos.z) * k;

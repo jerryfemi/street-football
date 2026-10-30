@@ -27,6 +27,8 @@ export interface CharacterAsset {
   clips: Map<string, AnimationClip>;
   /** When the dribble clip's touching foot meets the ball (normalised clip phases) and where (local). */
   dribbleContacts: DribbleContacts;
+  /** per skill clip: where the lifted (circling) foot works around, local x/z - the stepover ball spot */
+  skillSpots: Map<string, { x: number; z: number }>;
 }
 
 export interface DribbleContacts {
@@ -102,7 +104,53 @@ export async function loadCharacterAsset(onStatus: (msg: string) => void): Promi
   const dribble = clips.get('dribble');
   const dribbleContacts = template && dribble ? analyseContacts(template, scale, dribble) : DEFAULT_CONTACTS;
   console.info('[assets] dribble contacts', dribbleContacts);
-  return { template, scale, clips, dribbleContacts };
+  const skillSpots = new Map<string, { x: number; z: number }>();
+  if (template) {
+    for (const name of ['skill_stepover', 'skill_stepover_drag']) {
+      const c = clips.get(name);
+      if (c) {
+        const spot = analyseCircleSpot(template, scale, c);
+        if (spot) skillSpots.set(name, spot);
+      }
+    }
+  }
+  console.info('[assets] skill spots', Object.fromEntries(skillSpots));
+  return { template, scale, clips, dribbleContacts, skillSpots };
+}
+
+/**
+ * Stepovers: the leg circles OVER the ball, so the ball belongs at the centre of the lifted
+ * foot's path (where the foot is off the ground). Read it from the clip instead of guessing.
+ */
+function analyseCircleSpot(template: Object3D, scale: number, clip: AnimationClip): { x: number; z: number } | null {
+  const body = cloneSkinned(template);
+  body.scale.setScalar(scale);
+  const toes: Object3D[] = [];
+  body.traverse((o) => {
+    if (/(Left|Right)ToeBase$/.test(o.name)) toes.push(o);
+  });
+  if (toes.length < 2) return null;
+  const mixer = new AnimationMixer(body);
+  mixer.clipAction(clip).play();
+  const p = new Vector3();
+  const acc = toes.map(() => ({ n: 0, x: 0, z: 0 }));
+  const n = 90;
+  for (let i = 0; i <= n; i++) {
+    mixer.setTime((clip.duration * i) / n);
+    body.updateMatrixWorld(true);
+    toes.forEach((t, k) => {
+      t.getWorldPosition(p);
+      if (p.y > 0.12) {
+        acc[k].n++;
+        acc[k].x += -p.x;
+        acc[k].z += p.z;
+      }
+    });
+  }
+  mixer.stopAllAction();
+  const best = acc.reduce((a, b) => (b.n > a.n ? b : a));
+  if (best.n < 5) return null;
+  return { x: best.x / best.n, z: Math.max(0.12, best.z / best.n) };
 }
 
 /**
