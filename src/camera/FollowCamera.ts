@@ -1,5 +1,5 @@
 import { PerspectiveCamera, Vector3 } from 'three';
-import { CAMERA, GOAL } from '../config';
+import { CAMERA, GOAL, PITCH } from '../config';
 import { damp } from '../core/math';
 
 const GOAL_CENTER = new Vector3(0, 0, GOAL.z);
@@ -29,6 +29,12 @@ export class FollowCamera {
 
     _want.copy(focus).addScaledVector(_dir, CAMERA.distance);
     _want.y = CAMERA.height;
+
+    // Keep camera safely inside the arena cage so it never clips through the perimeter fence
+    const maxZ = PITCH.length / 2 - 1.2;
+    const maxX = PITCH.width / 2 - 1.2;
+    _want.z = Math.min(_want.z, maxZ);
+    _want.x = Math.max(-maxX, Math.min(maxX, _want.x));
 
     _look.lerpVectors(ball, GOAL_CENTER, 0.3);
     _look.y = 0.8;

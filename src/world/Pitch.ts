@@ -12,6 +12,7 @@ import {
   RingGeometry,
   type Scene,
 } from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { COLORS, GOAL, PITCH } from '../config';
 
 /**
@@ -23,6 +24,9 @@ export function buildPitch(scene: Scene): Group {
   const root = new Group();
   root.name = 'Pitch';
 
+  const fallback = new Group();
+  fallback.name = 'FallbackPrimitives';
+
   // Surrounding asphalt
   const asphalt = new Mesh(
     new PlaneGeometry(60, 60),
@@ -31,7 +35,7 @@ export function buildPitch(scene: Scene): Group {
   asphalt.rotation.x = -Math.PI / 2;
   asphalt.position.y = -0.01;
   asphalt.receiveShadow = true;
-  root.add(asphalt);
+  fallback.add(asphalt);
 
   // Turf
   const turf = new Mesh(
@@ -40,7 +44,7 @@ export function buildPitch(scene: Scene): Group {
   );
   turf.rotation.x = -Math.PI / 2;
   turf.receiveShadow = true;
-  root.add(turf);
+  fallback.add(turf);
 
   // Lines
   const lineMat = new MeshStandardMaterial({ color: COLORS.lines, roughness: 0.6 });
@@ -52,7 +56,7 @@ export function buildPitch(scene: Scene): Group {
     m.rotation.x = -Math.PI / 2;
     m.position.set(x, 0.005, z);
     m.receiveShadow = true;
-    root.add(m);
+    fallback.add(m);
   };
   addLine(PITCH.width, lw, 0, -hl + lw / 2); // goal line
   addLine(PITCH.width, lw, 0, hl - lw / 2); // back line
@@ -68,7 +72,7 @@ export function buildPitch(scene: Scene): Group {
   const circle = new Mesh(new RingGeometry(1.8, 1.8 + lw, 48), lineMat);
   circle.rotation.x = -Math.PI / 2;
   circle.position.y = 0.005;
-  root.add(circle);
+  fallback.add(circle);
 
   // Boards (cage walls) - leave a gap where the goal is
   const wallMat = new MeshStandardMaterial({ color: COLORS.walls, roughness: 0.5, metalness: 0.2 });
@@ -79,7 +83,7 @@ export function buildPitch(scene: Scene): Group {
     m.position.set(x, h / 2, z);
     m.castShadow = true;
     m.receiveShadow = true;
-    root.add(m);
+    fallback.add(m);
   };
   addWall(t, PITCH.length, -hw - t / 2, 0);
   addWall(t, PITCH.length, hw + t / 2, 0);
@@ -88,7 +92,8 @@ export function buildPitch(scene: Scene): Group {
   addWall(side, t, -hw + side / 2, -hl - t / 2);
   addWall(side, t, hw - side / 2, -hl - t / 2);
 
-  root.add(buildGoal());
+  fallback.add(buildGoal());
+  root.add(fallback);
   scene.add(root);
   return root;
 }
@@ -136,3 +141,31 @@ function buildGoal(): Group {
   g.add(new LineSegments(geo, new LineBasicMaterial({ color: 0xcbd5e1, transparent: true, opacity: 0.45 })));
   return g;
 }
+
+/**
+ * Loads custom arena GLB if available, otherwise keeps the primitive cage.
+ */
+export async function loadArena(pitch: Group): Promise<void> {
+  try {
+    const gltf = await new GLTFLoader().loadAsync(import.meta.env.BASE_URL + 'models/arena.glb');
+    const arena = gltf.scene;
+    arena.name = 'ArenaModel';
+
+    arena.traverse((o) => {
+      if ((o as Mesh).isMesh) {
+        o.receiveShadow = true;
+      }
+    });
+
+    // Remove the fallback generic pitch now that the 3D court is loaded
+    const fallback = pitch.getObjectByName('FallbackPrimitives');
+    if (fallback) {
+      pitch.remove(fallback);
+    }
+
+    pitch.add(arena);
+  } catch {
+    console.info('[assets] no arena model at public/models/arena.glb (using procedural pitch)');
+  }
+}
+
