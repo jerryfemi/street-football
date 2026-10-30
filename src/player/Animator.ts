@@ -1,5 +1,5 @@
-import { AnimationMixer, LoopOnce, LoopRepeat, type AnimationAction, type AnimationClip, type Object3D } from 'three';
-import { ANIM_FALLBACKS } from '../config';
+import { AnimationMixer, LoopOnce, LoopPingPong, LoopRepeat, type AnimationAction, type AnimationClip, type Object3D } from 'three';
+import { ANIM_FALLBACKS, ANIM_PINGPONG } from '../config';
 
 export interface PlayOptions {
   /** crossfade seconds */
@@ -34,6 +34,11 @@ export class Animator {
     return this.actions.size > 0;
   }
 
+  /** name of the clip actually playing (after fallbacks) */
+  get playingClip(): string {
+    return this.current?.getClip().name ?? '';
+  }
+
   get playing(): string {
     return this.currentName;
   }
@@ -65,7 +70,7 @@ export class Animator {
       next.setLoop(LoopOnce, 1);
       next.clampWhenFinished = true;
     } else {
-      next.setLoop(LoopRepeat, Infinity);
+      next.setLoop(ANIM_PINGPONG.includes(name) ? LoopPingPong : LoopRepeat, Infinity);
       next.clampWhenFinished = false;
     }
     let ts = opts.timeScale ?? 1;
@@ -77,6 +82,20 @@ export class Animator {
     if (this.current && this.current !== next) this.current.crossFadeTo(next, fade, false);
     this.current = next;
     this.currentName = name;
+  }
+
+  /** Normalised playback phase (0..1) of `name` if it is what's playing, else -1. */
+  phaseOf(name: string): number {
+    if (this.currentName !== name || !this.current) return -1;
+    const d = this.current.getClip().duration;
+    return d > 0 ? (this.current.time % d) / d : -1;
+  }
+
+  /** Seconds of real time per full cycle of the current clip. */
+  get cycleSeconds(): number {
+    if (!this.current) return 1;
+    const ts = Math.max(0.05, Math.abs(this.current.getEffectiveTimeScale()));
+    return this.current.getClip().duration / ts;
   }
 
   /** Scale locomotion playback with movement speed so feet don't skate. */

@@ -1,5 +1,6 @@
 import {
   AnimationClip,
+  AnimationMixer,
   AnimationUtils,
   Box3,
   type Bone,
@@ -24,7 +25,20 @@ export interface CharacterAsset {
   /** Uniform scale that makes the model ASSETS.targetHeight tall. */
   scale: number;
   clips: Map<string, AnimationClip>;
+  /** When the dribble clip's touching foot meets the ball (normalised clip phases) and where (local). */
+  dribbleContacts: DribbleContacts;
 }
+
+export interface DribbleContacts {
+  /** normalised phases (0..1) in the dribble clip where the touching foot reaches the ball */
+  phases: number[];
+  /** local x (right) of the foot at each contact */
+  xs: number[];
+  /** local contact distance in front (m) */
+  z: number;
+}
+
+const DEFAULT_CONTACTS: DribbleContacts = { phases: [0.1, 0.35, 0.6, 0.85], xs: [-0.08, 0.08, -0.08, 0.08], z: 0.4 };
 
 const fbx = new FBXLoader();
 const gltf = new GLTFLoader();
@@ -78,14 +92,59 @@ export async function loadCharacterAsset(onStatus: (msg: string) => void): Promi
       const res = await loadAny(path);
       const clip = res.animations[0];
       if (!clip) throw new Error('file has no animation');
-      if (path.includes('/rokoko/')) retargetRokoko(clip, clips.get('idle'));
+      if (path.includes('/rokoko/')) retargetRokoko(clip, clips.get('idle') ?? clips.get('idle_soccer'));
       clips.set(name, prepareClip(clip, name));
     } catch {
       console.info(`[assets] animation "${name}" not found at public/${path} (fallback will be used)`);
     }
   }
   console.info(`[assets] loaded clips: ${[...clips.keys()].join(', ') || '(none)'}`);
-  return { template, scale, clips };
+  const dribble = clips.get('dribble');
+  const dribbleContacts = template && dribble ? analyseContacts(template, scale, dribble) : DEFAULT_CONTACTS;
+  console.info('[assets] dribble contacts', dribbleContacts);
+  return { template, scale, clips, dribbleContacts };
+}
+
+/**
+ * Read the dribble clip itself to find WHEN the touching foot swings through the ball and WHERE.
+ * The ball is then timed to arrive exactly there (see Match.dribble), so touches line up with the
+ * animation instead of the ball floating in front of the player.
+ */
+function analyseContacts(template: Object3D, scale: number, clip: AnimationClip): DribbleContacts {
+  const body = cloneSkinned(template);
+  body.scale.setScalar(scale);
+  const toes: Object3D[] = [];
+  for (const side of ['Left', 'Right']) {
+    body.traverse((o) => {
+      if (new RegExp(`${side}ToeBase$`).test(o.name) && toes.length < (side === 'Left' ? 1 : 2)) toes.push(o);
+    });
+  }
+  if (toes.length !== 2) return DEFAULT_CONTACTS;
+  const mixer = new AnimationMixer(body);
+  mixer.clipAction(clip).play();
+  const n = 120;
+  const p = new Vector3();
+  const tr: { x: number; y: number; z: number }[][] = [[], []];
+  for (let i = 0; i <= n; i++) {
+    mixer.setTime((clip.duration * i) / n);
+    body.updateMatrixWorld(true);
+    for (let f = 0; f < 2; f++) {
+      toes[f].getWorldPosition(p);
+      tr[f].push({ x: -p.x, y: p.y, z: p.z }); // local right = -world x at yaw 0
+    }
+  }
+  const maxZ = Math.max(...tr[0].map((v) => v.z), ...tr[1].map((v) => v.z));
+  const cz = Math.max(0.25, Math.min(0.5, maxZ * 0.7)); // contact a bit before full extension
+  const hits: { ph: number; x: number }[] = [];
+  for (let f = 0; f < 2; f++) {
+    for (let i = 1; i <= n; i++) {
+      if (tr[f][i - 1].z < cz && tr[f][i].z >= cz && tr[f][i].y < 0.3) hits.push({ ph: i / n, x: tr[f][i].x });
+    }
+  }
+  mixer.stopAllAction();
+  if (hits.length === 0) return DEFAULT_CONTACTS;
+  hits.sort((a, b) => a.ph - b.ph);
+  return { phases: hits.map((h) => h.ph), xs: hits.map((h) => h.x), z: cz };
 }
 
 /**
