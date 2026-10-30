@@ -136,7 +136,7 @@ export class Game {
     this.cam.update(dt, this.attacker.pos, this.ball.pos);
     this.hud.setPower(this.human.charge);
     this.touch.setMode(this.ball.owner === this.defender && this.match.phase === 'live' ? 'defend' : 'attack');
-    this.hud.setClock(this.match.phase === 'live' ? this.match.shotClock : null);
+    this.hud.setClock(null);
     this.hud.update(dt);
 
     this.renderer.render(this.scene, this.cam.camera);

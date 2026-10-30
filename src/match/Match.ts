@@ -89,8 +89,7 @@ export class Match {
         if (ball.owner === defender && this.phaseTime > 0.9) this.checkPass();
         break;
       case 'live':
-        this.shotClock -= dt;
-        if (this.shotClock <= 0) this.endRound('defended', 'SHOT CLOCK!');
+        // no shot clock - play freely
         break;
       case 'goal':
       case 'defended':
