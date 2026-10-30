@@ -38,7 +38,7 @@ export const SKILLS: Record<string, SkillDef> = {
   stepover: {
     id: 'stepover',
     anim: 'skill_stepover',
-    duration: 0.95,
+    duration: 1.5, // Rokoko clip is ~1.9 s; played a little faster for arcade snap
     playerPath: [
       { t: 0, x: 0, z: 0 },
       { t: 0.4, x: -0.2, z: 0.15 },
@@ -52,7 +52,105 @@ export const SKILLS: Record<string, SkillDef> = {
       { t: 1, x: 1.35, z: 1.4 },
     ],
     fakeSide: -1,
+    protectedFor: 0.9,
+  },
+
+  /** Body feint: drop the hips one way without touching the ball, then push it the other. */
+  bodyfeint: {
+    id: 'bodyfeint',
+    anim: 'skill_bodyfeint',
+    duration: 1.4,
+    playerPath: [
+      { t: 0, x: 0, z: 0 },
+      { t: 0.35, x: -0.35, z: 0.1 },
+      { t: 0.6, x: -0.1, z: 0.25 },
+      { t: 1, x: 1.0, z: 0.9 },
+    ],
+    ballPath: [
+      { t: 0, x: 0, z: 0.45 },
+      { t: 0.55, x: 0, z: 0.5 },
+      { t: 0.75, x: 0.55, z: 0.75 },
+      { t: 1, x: 1.25, z: 1.35 },
+    ],
+    fakeSide: -1,
     protectedFor: 0.6,
+  },
+
+  /** Drop of the shoulder: quick, short fake then a burst the other way with a big touch. */
+  drop_shoulder: {
+    id: 'drop_shoulder',
+    anim: 'skill_drop_shoulder',
+    duration: 1.0,
+    playerPath: [
+      { t: 0, x: 0, z: 0 },
+      { t: 0.4, x: -0.3, z: 0.15 },
+      { t: 1, x: 0.9, z: 1.2 },
+    ],
+    release: { t: 0.55, vx: 3.2, vz: 5.5 },
+    fakeSide: -1,
+    protectedFor: 0.5,
+  },
+
+  /** Elastico: ball pushed out with the outside of the foot, then snapped back across. */
+  elastico: {
+    id: 'elastico',
+    anim: 'skill_elastico',
+    duration: 1.3,
+    playerPath: [
+      { t: 0, x: 0, z: 0 },
+      { t: 0.4, x: 0.2, z: 0.15 },
+      { t: 1, x: -1.0, z: 0.9 },
+    ],
+    ballPath: [
+      { t: 0, x: 0, z: 0.45 },
+      { t: 0.35, x: 0.4, z: 0.5 },
+      { t: 0.55, x: 0.25, z: 0.55 },
+      { t: 0.8, x: -0.6, z: 0.85 },
+      { t: 1, x: -1.25, z: 1.35 },
+    ],
+    fakeSide: 1,
+    protectedFor: 0.9,
+  },
+
+  /** Samba roll: sole rolls the ball across the body while turning away from pressure. */
+  samba_roll: {
+    id: 'samba_roll',
+    anim: 'skill_samba_roll',
+    duration: 1.6,
+    playerPath: [
+      { t: 0, x: 0, z: 0 },
+      { t: 0.5, x: -0.45, z: 0.05 },
+      { t: 1, x: -1.1, z: 0.6 },
+    ],
+    ballPath: [
+      { t: 0, x: 0, z: 0.4 },
+      { t: 0.3, x: -0.15, z: 0.35 },
+      { t: 0.6, x: -0.6, z: 0.35 },
+      { t: 1, x: -1.3, z: 1.0 },
+    ],
+    fakeSide: 1,
+    protectedFor: 1.1,
+  },
+
+  /** Drag stepover: pull the ball back, step over it, go out the side. Good escape when pressed. */
+  drag_stepover: {
+    id: 'drag_stepover',
+    anim: 'skill_stepover_drag',
+    duration: 1.7,
+    playerPath: [
+      { t: 0, x: 0, z: 0 },
+      { t: 0.35, x: 0, z: -0.35 },
+      { t: 0.7, x: 0.3, z: -0.2 },
+      { t: 1, x: 1.1, z: 0.5 },
+    ],
+    ballPath: [
+      { t: 0, x: 0, z: 0.45 },
+      { t: 0.3, x: 0, z: 0.05 },
+      { t: 0.65, x: 0.2, z: 0.1 },
+      { t: 1, x: 1.4, z: 0.9 },
+    ],
+    fakeSide: -1,
+    protectedFor: 1.0,
   },
 
   /**

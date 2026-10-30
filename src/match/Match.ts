@@ -1,5 +1,5 @@
 import { Vector3 } from 'three';
-import { BALL, DRIBBLE, GOAL, PLAYER, ROUND, SHOT, TACKLE } from '../config';
+import { BALL, BLOCK, DRIBBLE, GOAL, PLAYER, ROUND, SHOT, SLIDE, TACKLE } from '../config';
 import type { Ball } from '../ball/Ball';
 import type { DefenderAI } from '../controllers/DefenderAI';
 import type { PlayerIntent } from '../controllers/types';
@@ -157,8 +157,11 @@ export class Match {
       }
     } else if (intent.shoot && p.hasBall && this.phase === 'live') {
       p.startShoot(intent.shoot.power, intent.shoot.aimX);
+    } else if (intent.block && !p.hasBall && this.phase === 'live') {
+      p.startBlock();
     } else if (intent.tackle && !p.hasBall && this.phase === 'live') {
-      p.startTackle();
+      if (intent.slide) p.startSlide();
+      else p.startTackle();
       if (p.state === 'tackle') this.tackleHit = false;
     }
   }
@@ -308,8 +311,11 @@ export class Match {
   private resolveTackle(): void {
     const d = this.defender;
     if (d.state !== 'tackle' || this.tackleHit) return;
-    if (d.stateTime < TACKLE.activeFrom) return;
-    if (d.stateTime > TACKLE.activeTo) {
+    const from = d.sliding ? SLIDE.activeFrom : TACKLE.activeFrom;
+    const to = d.sliding ? SLIDE.activeTo : TACKLE.activeTo;
+    const reach = d.sliding ? SLIDE.reach : TACKLE.reach;
+    if (d.stateTime < from) return;
+    if (d.stateTime > to) {
       this.tackleHit = true;
       this.missedTackle = true;
       return;
@@ -317,7 +323,7 @@ export class Match {
     const ball = this.ball;
     if (ball.owner !== this.attacker || this.attacker.isProtected) return;
     d.footPoint(_a, 0.6);
-    if (_a.distanceTo(ball.pos) < TACKLE.reach) {
+    if (_a.distanceTo(ball.pos) < reach) {
       this.tackleHit = true;
       forwardFromYaw(d.yaw, _b).multiplyScalar(3.5);
       ball.kick(d, _b.x, 0.5, _b.z);
@@ -334,7 +340,7 @@ export class Match {
       if (ball.lastTouch === p && ball.noPickupTimer > 0) continue;
       const dx = ball.pos.x - p.pos.x;
       const dz = ball.pos.z - p.pos.z;
-      const r = PLAYER.radius + BALL.radius;
+      const r = PLAYER.radius + BALL.radius + (p.state === 'block' ? BLOCK.extraRadius : 0);
       const d2 = dx * dx + dz * dz;
       const speed = Math.hypot(ball.vel.x, ball.vel.z);
       if (d2 < r * r && d2 > 1e-8 && speed > 6) {

@@ -1,5 +1,5 @@
 import { Vector3 } from 'three';
-import { GOAL, TACKLE } from '../config';
+import { GOAL, SLIDE, TACKLE } from '../config';
 import type { Ball } from '../ball/Ball';
 import { localToWorld } from '../core/math';
 import type { Player } from '../player/Player';
@@ -21,6 +21,10 @@ export interface DefenderTuning {
   biteChance: number;
   /** tackle attempts per second when in range */
   tackleRate: number;
+  /** chance to drop into a block when the attacker winds up a shot nearby */
+  blockChance: number;
+  /** chance per second to go to ground with a slide when beaten */
+  slideRate: number;
 }
 
 export const DEFENDER_NORMAL: DefenderTuning = {
@@ -29,6 +33,8 @@ export const DEFENDER_NORMAL: DefenderTuning = {
   reaction: 0.25,
   biteChance: 0.7,
   tackleRate: 1.6,
+  blockChance: 0.6,
+  slideRate: 2.5,
 };
 
 /**
@@ -43,6 +49,7 @@ export class DefenderAI {
   };
   private biteTimer = 0;
   private inReachTime = 0;
+  private sawShot = false;
   private readonly biteDir = new Vector3();
 
   constructor(
@@ -90,6 +97,34 @@ export class DefenderAI {
       return i;
     }
     if (this.ball.owner === me) return i;
+
+    // Shot coming: maybe drop into a block (decide once per shot).
+    if (this.opponent.state === 'shoot') {
+      if (!this.sawShot) {
+        this.sawShot = true;
+        if (me.pos.distanceTo(this.opponent.pos) < 6 && Math.random() < this.tuning.blockChance) {
+          i.block = true;
+          return i;
+        }
+      }
+    } else this.sawShot = false;
+
+    // Beaten (attacker is level or past him, i.e. closer to goal): last-ditch slide.
+    const meToGoal = me.pos.distanceTo(GOAL_CENTER);
+    const attToGoal = this.opponent.pos.distanceTo(GOAL_CENTER);
+    me.footPoint(_foot, 0.6);
+    if (attToGoal < meToGoal + 0.3 && _foot.distanceTo(ball) < SLIDE.reach + 0.5 && me.tackleCooldown <= 0 && !this.opponent.isProtected) {
+      i.faceX = ball.x - me.pos.x;
+      i.faceZ = ball.z - me.pos.z;
+      if (Math.random() < this.tuning.slideRate * dt) {
+        i.tackle = true;
+        i.slide = true;
+      }
+      i.moveX = i.faceX;
+      i.moveZ = i.faceZ;
+      i.sprint = true;
+      return i;
+    }
 
     // Attacker has it: get goal-side. Drop off when he's far out, tighten up near goal.
     _t.subVectors(GOAL_CENTER, ball);

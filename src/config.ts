@@ -3,17 +3,20 @@
  * World axes: +Y up. The goal sits at -Z. Attacker starts at +Z and attacks toward -Z.
  */
 
+/**
+ * Play area = street cage arena (public/models/arena.glb, 22 x 42 m).
+ */
 export const PITCH = {
-  width: 14, // x extent (wall to wall)
-  length: 20, // z extent (back wall to goal line)
-  wallHeight: 1.1,
+  width: 22, // x extent (board to board)
+  length: 42, // z extent (goal line to back wall)
+  wallHeight: 3.5,
 } as const;
 
 export const GOAL = {
-  width: 3.0,
-  height: 2.0,
+  width: 3.2,
+  height: 2.1,
   depth: 1.2,
-  postRadius: 0.06,
+  postRadius: 0.08,
   /** z of the goal line */
   z: -PITCH.length / 2,
 } as const;
@@ -89,9 +92,26 @@ export const TACKLE = {
   stumbleTime: 0.7,
 } as const;
 
+/** Slide tackle: longer reach and lunge, but a long recovery if it misses. */
+export const SLIDE = {
+  duration: 0.9,
+  activeFrom: 0.12,
+  activeTo: 0.55,
+  reach: 1.15,
+  lungeSpeed: 9,
+  missRecovery: 1.1,
+} as const;
+
+/** Defender block stance (makes the body bigger to shots). */
+export const BLOCK = {
+  duration: 0.8,
+  /** extra body radius while blocking (m) */
+  extraRadius: 0.35,
+} as const;
+
 export const ROUND = {
   /** seconds the attacker has to score once the ball is live */
-  shotClock: 12,
+  shotClock: 15,
   pointsToWin: 5,
   resetDelay: 2.0,
 } as const;
@@ -120,6 +140,11 @@ export const RENDER = {
 export const ASSETS = {
   /** Mixamo character downloaded "With Skin" (.fbx) or a packed .glb */
   character: 'models/player.fbx',
+  /**
+   * Arena art (.glb). Missing = primitive cage. `goalLineZ` is where the art's goal line sits
+   * in its own coordinates; the loader shifts the model so it lines up with GOAL.z.
+   */
+  arena: { path: 'models/arena.glb', goalLineZ: -21 },
   /** Ball model (.glb, ~0.22 m diameter). Missing = procedural ball. */
   ball: 'models/ball.glb',
   /** Target standing height in metres; the model is auto-scaled to this. */
@@ -135,7 +160,21 @@ export const ASSETS = {
     sprint: 'anims/sprint.fbx',
     dribble: 'anims/dribble.fbx',
     receive: 'anims/receive.fbx',
-    skill_stepover: 'anims/skill_stepover.fbx',
+    // Rokoko video-mocap (anims/rokoko/*): retargeted on load (rotations only, hips height rescaled)
+    skill_stepover: 'anims/rokoko/stepover_stationary.fbx',
+    skill_stepover_side: 'anims/rokoko/stepover_side.fbx',
+    skill_stepover_drag: 'anims/rokoko/stepover_drag.fbx',
+    skill_stepover_moving: 'anims/rokoko/stepover_moving.fbx',
+    skill_samba_roll: 'anims/rokoko/samba_roll.fbx',
+    skill_samba_a: 'anims/rokoko/samba_variant_a.fbx',
+    skill_samba_b: 'anims/rokoko/samba_variant_b.fbx',
+    skill_elastico: 'anims/rokoko/elastico.fbx',
+    skill_bodyfeint: 'anims/rokoko/bodyfeint_classic.fbx',
+    skill_bodyfeint_run: 'anims/rokoko/bodyfeint_running.fbx',
+    skill_drop_shoulder: 'anims/rokoko/drop_shoulder.fbx',
+    block: 'anims/rokoko/defender_block.fbx',
+    slide_tackle: 'anims/rokoko/slide_tackle.fbx',
+    defend_stance: 'anims/rokoko/defender_stance.fbx',
     skill_knockon: 'anims/skill_knockon.fbx',
     shoot: 'anims/shoot.fbx',
     pass: 'anims/pass.fbx',
@@ -158,6 +197,26 @@ export const ASSETS = {
    */
   lockRootMotion: ['idle', 'run', 'sprint', 'dribble', 'jockey'] as string[],
   /**
+   * Optional [start, end] seconds to cut from a clip (drops the T-pose first frames of Rokoko
+   * exports, or keeps one repetition of a drill that repeats the move).
+   */
+  clipRanges: {
+    skill_stepover: [0.1, 1.97],
+    skill_stepover_side: [0.1, 2.27],
+    skill_stepover_drag: [0.1, 2.5],
+    skill_stepover_moving: [0.1, 2.07],
+    skill_samba_roll: [0.1, 2.13],
+    skill_samba_a: [0.1, 2.37],
+    skill_samba_b: [0.1, 2.83],
+    skill_elastico: [0.1, 2.0],
+    skill_bodyfeint: [0.1, 2.1],
+    skill_bodyfeint_run: [0.1, 1.7],
+    skill_drop_shoulder: [0.1, 1.47],
+    block: [0.1, 1.3],
+    slide_tackle: [0.1, 1.17],
+    defend_stance: [0.1, 1.27],
+  } as Record<string, [number, number]>,
+  /**
    * Optional bone renames for clips that don't use Mixamo bone names
    * (e.g. a Rokoko export without the Mixamo preset). key = source bone, value = Mixamo bone.
    * Example: { Hips: 'mixamorigHips', Spine: 'mixamorigSpine' }
@@ -172,6 +231,14 @@ export const ANIM_FALLBACKS: Record<string, string[]> = {
   dribble: ['run'],
   receive: ['idle'],
   skill_stepover: ['dribble', 'run'],
+  skill_elastico: ['skill_stepover', 'dribble'],
+  skill_bodyfeint: ['skill_stepover', 'dribble'],
+  skill_drop_shoulder: ['skill_bodyfeint', 'dribble'],
+  skill_samba_roll: ['skill_stepover', 'dribble'],
+  skill_stepover_drag: ['skill_stepover', 'dribble'],
+  block: ['defend_stance', 'idle'],
+  slide_tackle: ['tackle', 'run'],
+  defend_stance: ['jockey', 'idle'],
   skill_knockon: ['sprint', 'run'],
   shoot: ['pass', 'idle'],
   pass: ['shoot', 'idle'],

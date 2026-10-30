@@ -1,5 +1,5 @@
 import { Group, Mesh, MeshBasicMaterial, RingGeometry, Vector3, type Object3D, type Scene } from 'three';
-import { GOAL, PITCH, PLAYER, SHOT, TACKLE } from '../config';
+import { BLOCK, GOAL, PITCH, PLAYER, SHOT, SLIDE, TACKLE } from '../config';
 import type { PlayerIntent } from '../controllers/types';
 import { angleDelta, clamp, forwardFromYaw, localToWorld, samplePath, yawFromDir } from '../core/math';
 import type { SkillDef } from '../skills/skills';
@@ -7,7 +7,7 @@ import { Animator } from './Animator';
 import { instantiateBody, type CharacterAsset } from './assets';
 
 export type Role = 'attacker' | 'defender';
-export type PlayerState = 'free' | 'skill' | 'shoot' | 'tackle' | 'stumble' | 'celebrate' | 'receive';
+export type PlayerState = 'free' | 'skill' | 'shoot' | 'tackle' | 'stumble' | 'celebrate' | 'receive' | 'block';
 
 const _v = new Vector3();
 const _p = { x: 0, z: 0 };
@@ -26,6 +26,8 @@ export class Player {
   stateTime = 0;
   hasBall = false;
   tackleCooldown = 0;
+  /** current tackle is a slide */
+  sliding = false;
 
   // skill
   skill: SkillDef | null = null;
@@ -152,8 +154,22 @@ export class Player {
   startTackle(): void {
     if (this.tackleCooldown > 0) return;
     this.tackleCooldown = TACKLE.cooldown;
+    this.sliding = false;
     this.setState('tackle');
     this.animator.play('tackle', { once: true, duration: TACKLE.duration, fade: 0.08 });
+  }
+
+  startSlide(): void {
+    if (this.tackleCooldown > 0) return;
+    this.tackleCooldown = TACKLE.cooldown + SLIDE.missRecovery;
+    this.sliding = true;
+    this.setState('tackle');
+    this.animator.play('slide_tackle', { once: true, duration: SLIDE.duration, fade: 0.06 });
+  }
+
+  startBlock(): void {
+    this.setState('block');
+    this.animator.play('block', { once: true, duration: BLOCK.duration, fade: 0.08 });
   }
 
   stumble(): void {
@@ -192,10 +208,16 @@ export class Player {
         if (this.stateTime >= SHOT.duration) this.setState('free');
         break;
       case 'tackle': {
-        const k = Math.max(0, 1 - this.stateTime / TACKLE.duration);
-        forwardFromYaw(this.yaw, this.vel).multiplyScalar(TACKLE.lungeSpeed * k);
+        const dur = this.sliding ? SLIDE.duration : TACKLE.duration;
+        const k = Math.max(0, 1 - this.stateTime / dur);
+        forwardFromYaw(this.yaw, this.vel).multiplyScalar((this.sliding ? SLIDE.lungeSpeed : TACKLE.lungeSpeed) * k);
         this.pos.addScaledVector(this.vel, dt);
-        if (this.stateTime >= TACKLE.duration) this.setState('free');
+        if (this.stateTime >= dur) this.setState('free');
+        break;
+      }
+      case 'block': {
+        this.brake(dt, 14);
+        if (this.stateTime >= BLOCK.duration) this.setState('free');
         break;
       }
       case 'stumble':
@@ -288,7 +310,7 @@ export class Player {
       let name: string;
       let ref: number;
       if (s < 0.4) {
-        name = 'idle';
+        name = jockey ? 'defend_stance' : 'idle';
         ref = 0;
       } else if (jockey) {
         name = 'jockey';

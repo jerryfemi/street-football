@@ -1,5 +1,6 @@
 import {
   AnimationClip,
+  AnimationUtils,
   Box3,
   type Bone,
   CapsuleGeometry,
@@ -77,6 +78,7 @@ export async function loadCharacterAsset(onStatus: (msg: string) => void): Promi
       const res = await loadAny(path);
       const clip = res.animations[0];
       if (!clip) throw new Error('file has no animation');
+      if (path.includes('/rokoko/')) retargetRokoko(clip, clips.get('idle'));
       clips.set(name, prepareClip(clip, name));
     } catch {
       console.info(`[assets] animation "${name}" not found at public/${path} (fallback will be used)`);
@@ -112,8 +114,39 @@ function measureHeight(root: Object3D): number {
   return box.isEmpty() ? 0 : box.getSize(p).y;
 }
 
+/**
+ * Rokoko "Mixamo preset" exports share bone names with the character but not its units/proportions:
+ * keep only rotations, drop the extra Reference bone, and rescale hip height to this character
+ * (using the idle clip's hips height as the reference). Horizontal hip travel is removed -
+ * gameplay moves the player (skill playerPath), the clip only animates the body.
+ */
+function retargetRokoko(clip: AnimationClip, idle?: AnimationClip): void {
+  clip.tracks = clip.tracks.filter(
+    (t) => !t.name.startsWith('mixamorigReference') && (t.name.endsWith('.quaternion') || t.name === 'mixamorigHips.position'),
+  );
+  const hips = clip.tracks.find((t) => t.name === 'mixamorigHips.position');
+  if (!hips) return;
+  const ref = idle?.tracks.find((t) => t.name === 'mixamorigHips.position')?.values;
+  const rx = ref ? ref[0] : 0;
+  const ry = ref ? ref[1] : hips.values[1];
+  const rz = ref ? ref[2] : 0;
+  const v = hips.values;
+  // Rokoko's first frame is often a snap from the reference pose; use the 3rd frame as standing height
+  const y0 = v.length > 9 ? v[7] : v[1];
+  for (let k = 0; k < v.length; k += 3) {
+    v[k] = rx;
+    v[k + 1] = ry * (v[k + 1] / y0);
+    v[k + 2] = rz;
+  }
+}
+
 /** Rename, remap bones, optionally strip horizontal root motion. Mutates and returns the clip. */
 function prepareClip(clip: AnimationClip, name: string): AnimationClip {
+  const range = ASSETS.clipRanges[name];
+  if (range) {
+    const fps = 30;
+    clip = AnimationUtils.subclip(clip, name, Math.round(range[0] * fps), Math.round(range[1] * fps), fps);
+  }
   clip.name = name;
   const remap = ASSETS.boneRemap;
   if (Object.keys(remap).length > 0) {

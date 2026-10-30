@@ -18,6 +18,10 @@ export interface PlayerIntent {
   shoot: { power: number; aimX: number } | null;
   skill: { id: string; mirror: boolean } | null;
   tackle: boolean;
+  /** Tackle as a slide (longer reach, long recovery on a miss). */
+  slide?: boolean;
+  /** Drop into a blocking stance (vs an incoming shot). */
+  block?: boolean;
 }
 
 export function emptyIntent(): PlayerIntent {
@@ -34,4 +38,6 @@ export function clearIntent(i: PlayerIntent): void {
   i.shoot = null;
   i.skill = null;
   i.tackle = false;
+  i.slide = false;
+  i.block = false;
 }

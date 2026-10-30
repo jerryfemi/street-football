@@ -11,7 +11,8 @@ const _f = new Vector3();
  *
  *  WASD / Arrows  move          Shift  sprint
  *  Space (hold)   charge shot, release to shoot (steer left/right to aim)
- *  E              stepover (hold A/Left to break the other way)
+ *  E stepover · Q body feint · C elastico · V samba roll · G drop shoulder · X drag stepover
+ *                 (hold A/Left while pressing to do the mirrored version)
  *  R              knock-on (push and run; hold A/Left to go left)
  *  F              tackle (when defending)
  */
@@ -55,9 +56,19 @@ export class HumanController {
     }
     if (!this.player.hasBall && !inp.isDown('Space')) this.charge = -1;
 
-    if (inp.wasPressed('KeyE')) i.skill = { id: 'stepover', mirror: ax < 0 };
+    const mirror = ax < 0;
+    if (inp.wasPressed('KeyE')) i.skill = { id: 'stepover', mirror };
+    if (inp.wasPressed('KeyQ')) i.skill = { id: 'bodyfeint', mirror };
+    if (inp.wasPressed('KeyC')) i.skill = { id: 'elastico', mirror };
+    if (inp.wasPressed('KeyV')) i.skill = { id: 'samba_roll', mirror };
+    if (inp.wasPressed('KeyG')) i.skill = { id: 'drop_shoulder', mirror };
+    if (inp.wasPressed('KeyX')) i.skill = { id: 'drag_stepover', mirror };
     if (inp.wasPressed('KeyR')) i.skill = { id: 'knockon', mirror: ax < 0 };
-    if (inp.wasPressed('KeyF')) i.tackle = true;
+    if (inp.wasPressed('KeyF')) {
+      i.tackle = true;
+      i.slide = i.sprint; // Shift+F = slide tackle
+    }
+    if (inp.wasPressed('KeyB')) i.block = true;
     return i;
   }
 }
