@@ -28,7 +28,12 @@ Tick boxes as you go so whoever picks this up next (you, Gemini, Claude) knows w
 - [ ] Give the two players different looks (second Sketchfab model, or kit colour swap on the shirt material)
 - [ ] Replace primitive pitch with a Sketchfab street cage/court (keep `PITCH`/`GOAL` dimensions matching the art)
 
-## M2: First real skill moves (Rokoko)
+## M2: First real skill moves (Rokoko) - mostly done 2026-10-30
+- [x] 14 tutorial clips cut and run through Rokoko → `public/anims/rokoko/` (auto-retargeted on load)
+- [x] Skills wired: stepover (E), body feint (Q), elastico (C), samba roll (V), drop shoulder (G), drag stepover (X)
+- [x] Defender: block stance (AI blocks shots, B for humans), slide tackle when beaten (Shift+F), defend stance idle
+- [ ] Tune each skill's ball path to the touches in its clip (feel pass)
+- [ ] Use the unbound extras: stepover_side, stepover_moving, samba_a/b, bodyfeint_running, skill_spin
 - [ ] Film stepover, body feint, roulette, nutmeg fake, elastico (60 fps, full body, tripod, 1 person, still pose before/after)
 - [ ] Rokoko Vision → FBX (Mixamo skeleton preset) → `public/anims/skill_*.fbx`
 - [ ] Author each skill's `playerPath` + `ballPath` to match the touches (see ANIMATION_PIPELINE → "Authoring a skill")

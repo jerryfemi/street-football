@@ -29,9 +29,9 @@ npm run preview    # serve the production build
 | **W A S D** / arrows | move (camera-relative) |
 | **Shift** | sprint |
 | **Space** (hold, release) | charge + shoot. Hold A/D while releasing to aim left/right |
-| **E** | stepover: sells left, breaks right. Hold **A** to mirror it |
+| **E / Q / C / V / G / X** | stepover / body feint / elastico / samba roll / drop shoulder / drag stepover. Hold **A** to mirror |
 | **R** | knock-on: push it past him and run. Hold **A** to go left |
-| **F** | tackle (when you're defending; AI defends for now) |
+| **F** / **Shift+F** / **B** | tackle / slide tackle / block (when you're defending; AI defends for now) |
 
 Touch controls are on the plan (see `docs/PLAN.md`, M3).
 
