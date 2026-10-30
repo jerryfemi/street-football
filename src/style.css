@@ -80,3 +80,60 @@ html, body {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
   background: var(--bg); color: var(--muted); font-weight: 600; letter-spacing: 0.08em;
 }
+
+/* ---------------- on-screen controls (touch + mouse) ---------------- */
+.tc { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
+.tc > *, .tc-set > * { pointer-events: auto; touch-action: none; }
+.tc-set { position: absolute; right: 20px; bottom: 28px; width: 260px; height: 230px; pointer-events: none; }
+
+.tc-stick {
+  position: absolute; left: 28px; bottom: 36px; width: 150px; height: 150px; border-radius: 50%;
+  background: radial-gradient(circle, rgba(56, 189, 248, 0.10), rgba(15, 23, 42, 0.55));
+  border: 2px solid rgba(148, 163, 184, 0.35); backdrop-filter: blur(6px);
+  display: grid; place-items: center; cursor: grab;
+}
+.tc-stick.on { border-color: rgba(56, 189, 248, 0.8); }
+.tc-knob {
+  width: 62px; height: 62px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #7dd3fc, #0284c7);
+  box-shadow: 0 6px 20px rgba(2, 132, 199, 0.5); transition: transform 0.06s linear;
+}
+
+.tc-btn {
+  position: absolute; display: grid; place-items: center; border-radius: 50%;
+  font-weight: 900; letter-spacing: 0.06em; font-size: 12px; color: #fff; cursor: pointer;
+  border: 2px solid rgba(255, 255, 255, 0.18); backdrop-filter: blur(6px);
+  transition: transform 0.08s ease, filter 0.08s ease; user-select: none;
+}
+.tc-btn.on { transform: scale(0.92); filter: brightness(1.35); }
+.tc-shoot { right: 0; bottom: 0; width: 92px; height: 92px; background: rgba(239, 68, 68, 0.55); }
+.tc-dash { right: 108px; bottom: 0; width: 72px; height: 72px; background: rgba(245, 158, 11, 0.5); }
+.tc-block { right: 0; bottom: 108px; width: 72px; height: 72px; background: rgba(0, 255, 204, 0.35); }
+
+.tc-skill {
+  position: absolute; right: 96px; bottom: 96px; width: 132px; height: 132px; border-radius: 50%;
+  background: rgba(15, 23, 42, 0.55); border: 2px dashed rgba(0, 255, 204, 0.45);
+  backdrop-filter: blur(6px); cursor: crosshair;
+}
+.tc-skill.on { border-style: solid; border-color: rgba(0, 255, 204, 0.9); }
+.tc-skill span {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  font-size: 11px; font-weight: 800; letter-spacing: 0.12em; color: rgba(0, 255, 204, 0.85);
+}
+.tc-skill i {
+  position: absolute; width: 0; height: 0; border: 8px solid transparent; opacity: 0.5;
+}
+.tc-skill i.u { top: 8px; left: 50%; margin-left: -8px; border-bottom-color: #00ffcc; }
+.tc-skill i.d { bottom: 8px; left: 50%; margin-left: -8px; border-top-color: #00ffcc; }
+.tc-skill i.l { left: 8px; top: 50%; margin-top: -8px; border-right-color: #00ffcc; }
+.tc-skill i.r { right: 8px; top: 50%; margin-top: -8px; border-left-color: #00ffcc; }
+.tc-skill i.hit { animation: tcHit 0.35s ease; }
+@keyframes tcHit { 0% { opacity: 1; transform: scale(1.8); } 100% { opacity: 0.5; transform: scale(1); } }
+
+.hud-help { bottom: auto; top: 58px; font-size: 11px; opacity: 0.8; }
+.hud-power { bottom: 210px; }
+@media (max-width: 700px) {
+  .tc-stick { left: 16px; bottom: 24px; width: 130px; height: 130px; }
+  .tc-set { right: 12px; bottom: 20px; transform: scale(0.85); transform-origin: bottom right; }
+  .hud-help { display: none; }
+}

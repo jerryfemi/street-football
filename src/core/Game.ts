@@ -20,6 +20,7 @@ import { Match } from '../match/Match';
 import { loadCharacterAsset } from '../player/assets';
 import { Player } from '../player/Player';
 import { Hud } from '../ui/Hud';
+import { TouchControls } from '../ui/TouchControls';
 import { buildPitch, loadArena } from '../world/Pitch';
 import { Input } from './Input';
 
@@ -33,6 +34,7 @@ export class Game {
   private readonly scene = new Scene();
   private readonly cam: FollowCamera;
   private readonly hud: Hud;
+  private readonly touch: TouchControls;
   private readonly input = new Input();
   private readonly timer = new Timer();
   private accumulator = 0;
@@ -57,6 +59,7 @@ export class Game {
 
     this.cam = new FollowCamera(container.clientWidth / container.clientHeight);
     this.hud = new Hud(document.body);
+    this.touch = new TouchControls(document.body, this.input);
 
     this.setupScene();
     window.addEventListener('resize', () => this.onResize());
@@ -132,6 +135,7 @@ export class Game {
     this.ball.sync();
     this.cam.update(dt, this.attacker.pos, this.ball.pos);
     this.hud.setPower(this.human.charge);
+    this.touch.setMode(this.ball.owner === this.defender && this.match.phase === 'live' ? 'defend' : 'attack');
     this.hud.setClock(this.match.phase === 'live' ? this.match.shotClock : null);
     this.hud.update(dt);
 

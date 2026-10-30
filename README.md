@@ -40,7 +40,7 @@ You steer and pick the move; the game does the footwork (touches, first touch, c
 | **↓ then ← / →** | samba roll that way |
 | **F** / **Shift+F** / **B** | tackle / slide tackle / block (when defending) |
 
-Touch controls are on the plan (see `docs/PLAN.md`, M3).
+**On-screen controls** (touch or mouse, keyboard still works): left joystick = move; SKILL pad = drag/flick a direction (same gestures as the arrows, e.g. swipe left-then-right in one stroke = elastico); DASH (hold/tap); SHOOT (hold/release). When defending they switch to TACKLE · SLIDE · BLOCK.
 
 ## Adding your player + animations
 
