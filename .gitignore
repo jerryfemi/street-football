@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.vite/
+*.log
+.DS_Store
+Thumbs.db
+
+# Raw source files you don't ship (keep originals elsewhere or in art/)
+art/raw/
