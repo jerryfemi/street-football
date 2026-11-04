@@ -10,7 +10,9 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "lint:fix": "eslint . --fix"
+    "lint:fix": "eslint . --fix",
+    "cliplab:dev": "npm --prefix clip_lab run dev",
+    "cliplab:build": "npm --prefix clip_lab run build"
   },
   "dependencies": {
     "three": "0.186.1"
