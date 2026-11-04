@@ -171,3 +171,17 @@ export function downloadFile(filename: string, content: string | Uint8Array, mim
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
+
+export function exportProjectFile(project: Project): void {
+  const jsonStr = JSON.stringify(project, null, 2);
+  downloadFile('project.cliplab.json', jsonStr, 'application/json');
+}
+
+export async function importProjectFile(file: File): Promise<Project> {
+  const text = await file.text();
+  const parsed = JSON.parse(text) as Project;
+  if (parsed.version !== 1 || !Array.isArray(parsed.clips)) {
+    throw new Error('Invalid .cliplab.json project file format');
+  }
+  return parsed;
+}
