@@ -48,11 +48,20 @@ export class BallReplay {
     let bvy = 0;
     let bvz = 0;
 
+    // Root (hips ground point, local axes) at a trimmed time; zero without tracks.
+    // Touch 'at'/'to' are relative to the root at contact (contract §6).
+    const rootAt = (tt: number): { x: number; z: number } => {
+      if (!tracks || tracks.points.length === 0) return { x: 0, z: 0 };
+      const i = Math.min(tracks.points.length - 1, Math.max(0, Math.round((clip.in + tt) * tracks.fps)));
+      return tracks.points[i].hips;
+    };
+
     if (touches.length > 0) {
       // Local x is converted to world coords for viewport: world.x = -localX, world.z = localZ
-      bx = -touches[0].at.x;
+      const r0 = rootAt(touches[0].t);
+      bx = -(touches[0].at.x + r0.x);
       by = touches[0].at.y ?? BALL.radius;
-      bz = touches[0].at.z;
+      bz = touches[0].at.z + r0.z;
     }
 
     let touchIdx = 0;
@@ -68,12 +77,13 @@ export class BallReplay {
         const touch = touches[touchIdx];
 
         // Convert touch 'at' & 'to' (local) to world coords:
-        const atWorldX = -touch.at.x;
-        const atWorldZ = touch.at.z;
+        const root = rootAt(touch.t);
+        const atWorldX = -(touch.at.x + root.x);
+        const atWorldZ = touch.at.z + root.z;
         const atWorldY = Math.max(BALL.radius, touch.at.y ?? BALL.radius);
 
-        const toWorldX = touch.to ? -touch.to.x : atWorldX;
-        const toWorldZ = touch.to ? touch.to.z : atWorldZ + 0.8;
+        const toWorldX = touch.to ? -(touch.to.x + root.x) : atWorldX;
+        const toWorldZ = touch.to ? touch.to.z + root.z : atWorldZ + 0.8;
 
         // Warning Check 1: Miss distance from touching toe if foot tracks available
         if (tracks && tracks.points.length > 0) {
@@ -86,7 +96,29 @@ export class BallReplay {
           const toeWorldX = -toe.x;
           const toeWorldZ = toe.z;
           const distToToe = Math.hypot(bx - toeWorldX, bz - toeWorldZ);
-          if (distToToe > 0.28) {
+          if (touchIdx > 0) {
+            // Early/late: the ball reaches this touch too fast for the foot, or stops short of it
+            const tv = touch.foot === 'L' ? p.toeVelL : p.toeVelR;
+            const relSpeed = Math.hypot(bvx + tv.x, bvz - tv.z); // toe vel is local: world.x = -local.x
+            if (relSpeed > 1.5) {
+              warnings.push({
+                id: `warn_speed_${touch.id}`,
+                type: 'speed_error',
+                t: touch.t,
+                message: `Ball arrives at ${relSpeed.toFixed(2)} m/s relative to the foot (> 1.5, it would bounce off)`,
+              });
+            }
+            const short = Math.hypot(bx - atWorldX, bz - atWorldZ);
+            if (short > 0.35) {
+              warnings.push({
+                id: `warn_short_${touch.id}`,
+                type: 'short',
+                t: touch.t,
+                message: `Ball is ${short.toFixed(2)} m from this touch's contact point (> 0.35)`,
+              });
+            }
+          }
+          if (distToToe > 0.25) {
             warnings.push({
               id: `warn_miss_${touch.id}`,
               type: 'miss',
