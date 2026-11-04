@@ -145,6 +145,17 @@ class Store {
     this.notify();
   }
 
+  /** Swap in a whole project (Load Project). Clears history and saves. */
+  replaceProject(project: Project): void {
+    this.state.project = project;
+    this.state.selectedClipId = project.clips[0]?.id ?? null;
+    this.state.selectedTouchId = null;
+    this.undoStack = [];
+    this.redoStack = [];
+    this.scheduleSave();
+    this.notify();
+  }
+
   setCharacterFile(file: string): void {
     this.state.project.characterFile = file;
     this.scheduleSave();
