@@ -6,6 +6,7 @@ import { ClipList } from './panels/ClipList';
 import { Inspector } from './panels/Inspector';
 import { Timeline } from './timeline/Timeline';
 import { Transport } from './timeline/Transport';
+import { BlendTester, type ChainItem } from './panels/BlendTester';
 import { Viewport } from './scene/Viewport';
 import { CharacterRig } from './scene/CharacterRig';
 import { BallReplay } from './scene/BallReplay';
@@ -16,11 +17,15 @@ import { retargetRokoko } from './shared/assets';
 import { sampleFootTracks, type ClipFootTracks } from './analysis/footTracks';
 import { detectTouches } from './analysis/detectTouches';
 import { detectPlanted } from './analysis/detectPlanted';
+import { mirrorClip } from './analysis/mirror';
+import { smoothClip } from './analysis/smooth';
+import { applyFootLock } from './analysis/footLock';
+import { extractRootMotion } from './analysis/rootMotion';
 import { buildClipsJson, downloadFile, exportPlayerGlb } from './io/exportGame';
 
 const app = document.getElementById('app')!;
 
-// 1. Build Header with Export Buttons
+// 1. Build Header with Blend Tester and Export Buttons
 const header = document.createElement('header');
 header.className = 'app-header';
 
@@ -31,6 +36,11 @@ header.appendChild(title);
 
 const headerActions = document.createElement('div');
 headerActions.className = 'header-actions';
+
+const blendBtn = document.createElement('button');
+blendBtn.className = 'btn-secondary';
+blendBtn.textContent = '🔗 Blend Tester';
+blendBtn.onclick = () => blendTester.toggle();
 
 const exportJsonBtn = document.createElement('button');
 exportJsonBtn.className = 'btn-secondary';
@@ -65,7 +75,7 @@ exportGlbBtn.onclick = async () => {
   }
 };
 
-headerActions.append(exportJsonBtn, exportGlbBtn);
+headerActions.append(blendBtn, exportJsonBtn, exportGlbBtn);
 header.appendChild(headerActions);
 app.appendChild(header);
 
@@ -101,6 +111,7 @@ const getOrComputeTracks = (clipId: string): ClipFootTracks | undefined => {
   return tracks;
 };
 
+// Analysis & Cleanup Actions
 const runAutoDetectTouches = () => {
   const clip = store.getSelectedClip();
   if (!clip) return;
@@ -127,6 +138,80 @@ const runAutoFillPlanted = () => {
   store.updateClip(clip.id, { planted });
   timeline.draw();
   showToast(`Detected ${planted.length} planted intervals`, 'info');
+};
+
+const runMirrorClip = () => {
+  const clip = store.getSelectedClip();
+  if (!clip) return;
+  const raw = loadedClips.get(clip.id);
+  if (!raw) return;
+
+  const mirrored = mirrorClip(raw, clip);
+  loadedClips.set(mirrored.entry.id, mirrored.clip);
+  store.addClip(mirrored.entry);
+  store.selectClip(mirrored.entry.id);
+  tracksCache.delete(mirrored.entry.id);
+  showToast(`Created mirrored clip: ${mirrored.entry.name}`, 'success');
+};
+
+const runSmoothClip = (windowSize: number) => {
+  const clip = store.getSelectedClip();
+  if (!clip) return;
+  const raw = loadedClips.get(clip.id);
+  if (!raw) return;
+
+  const smoothed = smoothClip(raw, windowSize, clip.touches);
+  loadedClips.set(clip.id, smoothed);
+  store.updateClip(clip.id, {
+    cleanup: { ...clip.cleanup, smooth: windowSize },
+  });
+  if (rig) rig.playClip(smoothed, clip);
+  tracksCache.delete(clip.id);
+  updateReplay();
+  showToast(`Applied ${windowSize}f quaternion smoothing`, 'info');
+};
+
+const runFootLock = () => {
+  const clip = store.getSelectedClip();
+  if (!clip || !characterTemplate) {
+    showToast('Requires loaded character to solve Foot Lock IK', 'warn');
+    return;
+  }
+  const raw = loadedClips.get(clip.id);
+  if (!raw) return;
+
+  if (clip.planted.length === 0) {
+    showToast('Detect or add planted intervals first', 'warn');
+    return;
+  }
+
+  showToast('Solving 2-bone IK planted foot lock...', 'info');
+  const locked = applyFootLock(characterTemplate, characterScale, raw, clip.planted);
+  loadedClips.set(clip.id, locked);
+  store.updateClip(clip.id, {
+    cleanup: { ...clip.cleanup, footLock: true },
+  });
+  if (rig) rig.playClip(locked, clip);
+  tracksCache.delete(clip.id);
+  updateReplay();
+  showToast('Baked locked planted feet', 'success');
+};
+
+const runExtractRootMotion = () => {
+  const clip = store.getSelectedClip();
+  if (!clip) return;
+  const raw = loadedClips.get(clip.id);
+  if (!raw) return;
+
+  const res = extractRootMotion(raw, 'xz');
+  loadedClips.set(clip.id, res.clip);
+  store.updateClip(clip.id, {
+    rootMotion: { extracted: true, mode: 'xz' },
+  });
+  if (rig) rig.playClip(res.clip, clip);
+  tracksCache.delete(clip.id);
+  updateReplay();
+  showToast(`Extracted ${res.samples.length} root motion samples`, 'success');
 };
 
 const onDropFiles = async (files: FileList) => {
@@ -162,7 +247,19 @@ const onDropFiles = async (files: FileList) => {
 
 new ClipList(main, onDropFiles);
 main.appendChild(viewportContainer);
-const inspector = new Inspector(main, runAutoDetectTouches, runAutoFillPlanted);
+const inspector = new Inspector(
+  main,
+  runAutoDetectTouches,
+  runAutoFillPlanted,
+  runMirrorClip,
+  runSmoothClip,
+  runFootLock,
+  runExtractRootMotion,
+);
+
+const blendTester = new BlendTester(main, (chain) => {
+  playChain(chain);
+});
 
 // 4. Timeline & Transport Bars
 const timeline = new Timeline(app);
@@ -238,6 +335,15 @@ function updateReplay(): void {
   overlays.updateTouchGizmos(clip.touches, store.getState().selectedTouchId);
   timeline.setWarnings(res.warnings);
   inspector.setWarnings(res.warnings);
+}
+
+// Chain playback player
+function playChain(chain: ChainItem[]): void {
+  if (chain.length === 0) return;
+  showToast(`Playing animation blend chain (${chain.length} clips)...`, 'info');
+  store.selectClip(chain[0].clipId);
+  store.setTime(0);
+  store.setPlaying(true);
 }
 
 // 6. Clip & Touch selection updates

@@ -10,6 +10,10 @@ export class Inspector {
     parent: HTMLElement,
     private readonly onAutoDetectTouches?: () => void,
     private readonly onAutoFillPlanted?: () => void,
+    private readonly onMirrorClip?: () => void,
+    private readonly onSmoothClip?: (windowSize: number) => void,
+    private readonly onFootLock?: () => void,
+    private readonly onExtractRootMotion?: () => void,
   ) {
     this.element = document.createElement('div');
     this.element.className = 'panel inspector-panel';
@@ -116,16 +120,51 @@ export class Inspector {
 
     const detectBtn = document.createElement('button');
     detectBtn.className = 'btn btn-secondary';
-    detectBtn.textContent = '⚡ Auto-Detect Touches';
+    detectBtn.textContent = '⚡ Auto Touches';
     detectBtn.onclick = () => this.onAutoDetectTouches?.();
 
     const plantBtn = document.createElement('button');
     plantBtn.className = 'btn btn-secondary';
-    plantBtn.textContent = '🦶 Auto-Fill Planted';
+    plantBtn.textContent = '🦶 Auto Planted';
     plantBtn.onclick = () => this.onAutoFillPlanted?.();
 
-    toolsRow.append(detectBtn, plantBtn);
+    const mirrorBtn = document.createElement('button');
+    mirrorBtn.className = 'btn btn-secondary';
+    mirrorBtn.textContent = '🪞 Mirror L↔R';
+    mirrorBtn.onclick = () => this.onMirrorClip?.();
+
+    const footLockBtn = document.createElement('button');
+    footLockBtn.className = 'btn btn-secondary';
+    footLockBtn.textContent = '🔒 Foot Lock';
+    footLockBtn.onclick = () => this.onFootLock?.();
+
+    const rootBtn = document.createElement('button');
+    rootBtn.className = 'btn btn-secondary';
+    rootBtn.textContent = '🏃 Root Motion';
+    rootBtn.onclick = () => this.onExtractRootMotion?.();
+
+    toolsRow.append(detectBtn, plantBtn, mirrorBtn, footLockBtn, rootBtn);
     clipSection.appendChild(toolsRow);
+
+    // Smoothing Slider
+    const smoothRow = document.createElement('div');
+    smoothRow.className = 'inspector-field';
+    const smoothLabel = document.createElement('label');
+    smoothLabel.textContent = `Smooth (${clip.cleanup.smooth ?? 0}f)`;
+    const smoothInput = document.createElement('input');
+    smoothInput.type = 'range';
+    smoothInput.min = '0';
+    smoothInput.max = '7';
+    smoothInput.step = '1';
+    smoothInput.value = String(clip.cleanup.smooth ?? 0);
+    smoothInput.className = 'input-range';
+    smoothInput.onchange = () => {
+      const val = parseInt(smoothInput.value, 10);
+      smoothLabel.textContent = `Smooth (${val}f)`;
+      this.onSmoothClip?.(val);
+    };
+    smoothRow.append(smoothLabel, smoothInput);
+    clipSection.appendChild(smoothRow);
 
     container.appendChild(clipSection);
 
