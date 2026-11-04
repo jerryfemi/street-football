@@ -22,7 +22,7 @@ export const defaultDetectionThresholds: DetectionThresholds = {
   minZ: 0.1, // ball is in front of the body; a foot landing beside the hips is a plant, not a touch
   maxZ: 0.8,
   maxX: 0.55,
-  suppressionWindowS: 0.2,
+  suppressionWindowS: 0.25, // one foot can't touch twice in a quarter second
 };
 
 interface Candidate {
@@ -67,31 +67,36 @@ export function detectTouches(
       for (let k = 1; k <= 3; k++) {
         const prevP = points[i - k];
         const prevVel = foot === 'L' ? prevP.toeVelL : prevP.toeVelR;
-        // Relative to hips velocity
-        const hipsVx = (cur.hips.x - prevP.hips.x) * fps;
-        const hipsVz = (cur.hips.z - prevP.hips.z) * fps;
+        // Relative to the hips' velocity at that same frame (was divided by the wrong span)
+        const pp = points[Math.max(0, i - k - 1)];
+        const hipsVx = (prevP.hips.x - pp.hips.x) * fps;
+        const hipsVz = (prevP.hips.z - pp.hips.z) * fps;
         const relVx = prevVel.x - hipsVx;
         const relVz = prevVel.z - hipsVz;
         sumPreSpeed += Math.hypot(relVx, relVz);
       }
-      const avgPreSpeed = sumPreSpeed / 3;
+      // A swing counts if it's fast relative to the body OR in world space (jogging dribble touches
+      // are slow relative to the hips but fast over the ground)
+      let sumAbs = 0;
+      for (let k = 1; k <= 3; k++) sumAbs += (foot === 'L' ? points[i - k].toeVelL : points[i - k].toeVelR).speedH;
+      const avgPreSpeed = Math.max(sumPreSpeed / 3, sumAbs / 3);
       if (avgPreSpeed < thresholds.minPreSpeed) {
         continue;
       }
 
       // 4. Sudden change check (speed drop or direction change within 2 frames)
-      const postP = points[Math.min(points.length - 1, i + 2)];
-      const postVel = foot === 'L' ? postP.toeVelL : postP.toeVelR;
-
-      const speedDrop = (avgPreSpeed - postVel.speedH) / Math.max(1e-3, avgPreSpeed);
-
-      // Angle between pre-direction and post-direction
-      const prevP1 = points[i - 1];
-      const prevVel1 = foot === 'L' ? prevP1.toeVelL : prevP1.toeVelR;
-      const dot = (prevVel1.x * postVel.x + prevVel1.z * postVel.z);
-      const mag = (prevVel1.speedH * postVel.speedH) || 1e-4;
-      const cosAngle = Math.max(-1, Math.min(1, dot / mag));
-      const angleDeg = Math.acos(cosAngle) * (180 / Math.PI);
+      // Foot slows or changes direction (world space: a boot meeting the ball) within 2 frames
+      const prevVel1 = foot === 'L' ? points[i - 1].toeVelL : points[i - 1].toeVelR;
+      let speedDrop = 0;
+      let angleBest = 0;
+      for (let j = i; j <= Math.min(points.length - 1, i + 2); j++) {
+        const pv = foot === 'L' ? points[j].toeVelL : points[j].toeVelR;
+        const ref = Math.max(avgPreSpeed, prevVel1.speedH);
+        speedDrop = Math.max(speedDrop, (ref - pv.speedH) / Math.max(1e-3, ref));
+        const c = (prevVel1.x * pv.x + prevVel1.z * pv.z) / (prevVel1.speedH * pv.speedH || 1e-4);
+        angleBest = Math.max(angleBest, Math.acos(Math.max(-1, Math.min(1, c))) * (180 / Math.PI));
+      }
+      const angleDeg = angleBest;
 
       if (speedDrop >= thresholds.minSpeedDropPct || angleDeg >= thresholds.minDirectionChangeDeg) {
         const score = avgPreSpeed * 2 + speedDrop * 3 + (angleDeg / 40);
