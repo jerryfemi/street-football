@@ -49,6 +49,18 @@ Tick boxes as you go so whoever picks this up next (you, Gemini, Claude) knows w
 - [ ] Calm idle (Mixamo "Breathing Idle" → idle_calm.fbx), "Walking" → walk.fbx, jog-without-ball → run.fbx, strafes, celebration
 - [ ] Touch controls: left stick, Dash, Shoot, right-side swipe = skill flick
 
+## M2.6: Contact layer (2026-10-30)
+- [x] Capsule colliders on the animated bones (thighs, shins, feet, torso, chest, head)
+- [x] Swept ball-vs-body: deflection uses the bone's own velocity; planted feet kill the ball; shots get BLOCKED / CHESTED / HEADED AWAY
+- [x] Fast balls can't be trapped (they bounce); trapping needs a foot + reaction time
+- [x] Nutmeg from the live gap between the defender's feet (wide stance = possible, narrow = clips shin); collect it the other side within 3 s = PANNA (round win)
+- [x] Tackles: foot reaches leg before ball = FOUL (trip, replay round); ball first = attacker stumbles over it
+- [x] Body impacts by closing speed + balance (braced defender beats a runner; mid-skill players lose)
+- [x] Procedural hit springs on the struck bone, layered over animation
+- [ ] Defender closes the gap / sticks a leg out (IK) when a nutmeg or pass is coming
+- [ ] Balance model: weight on wrong foot after a fake → slow turn, ankle-breaker falls
+- [ ] Ball vs attacker's own standing leg (bad touch) · chips over the defender · heading
+
 ## M3: Mobile + game feel
 - [ ] Touch controls: virtual joystick (left), Shoot (hold), Skill, Sprint buttons (right). Feed the same `Input` API
 - [ ] Camera polish: pull back on sprint, slight zoom on skills, shake on post hits, slow-mo on panna/nutmeg
