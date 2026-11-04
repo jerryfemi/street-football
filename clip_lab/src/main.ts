@@ -1,5 +1,6 @@
 import './style.css';
-import { type AnimationClip, type Object3D } from 'three';
+import { AnimationClip, VectorKeyframeTrack, type Object3D } from 'three';
+import type { ClipEntry } from './state/project';
 import { store } from './state/store';
 import { initToasts, showToast } from './panels/Toasts';
 import { ClipList } from './panels/ClipList';
@@ -14,7 +15,7 @@ import { CharacterRig } from './scene/CharacterRig';
 import { BallReplay } from './scene/BallReplay';
 import { Overlays } from './scene/Overlays';
 import { getFileBuffer } from './io/db';
-import { importCharacterFile, importClipFile, parseFbx } from './io/importFbx';
+import { importCharacterFile, importClipFile, isRokokoClip, parseFbx, prepareCharacter } from './io/importFbx';
 import { retargetRokoko } from './shared/assets';
 import { sampleFootTracks, type ClipFootTracks } from './analysis/footTracks';
 import { detectTouches } from './analysis/detectTouches';
@@ -70,9 +71,8 @@ loadProjectInput.onchange = async (e) => {
   if (file) {
     try {
       const proj = await importProjectFile(file);
-      await store.init();
-      store.getState().project.clips = proj.clips;
-      store.getState().project.characterFile = proj.characterFile;
+      store.replaceProject(proj);
+      await rebuildAll();
       showToast(`Imported project with ${proj.clips.length} clips`, 'success');
     } catch (err) {
       showToast(`Failed loading project: ${(err as Error).message}`, 'error');
@@ -91,7 +91,7 @@ exportJsonBtn.className = 'btn-secondary';
 exportJsonBtn.textContent = '📥 clips.json';
 exportJsonBtn.onclick = () => {
   const project = store.getState().project;
-  const data = buildClipsJson(project);
+  const data = buildClipsJson(project, false, rootSamplesMap);
   downloadFile('clips.json', JSON.stringify(data, null, 2), 'application/json');
   showToast(`Exported clips.json with ${Object.keys(data.clips).length} clips`, 'success');
 };
@@ -110,6 +110,8 @@ exportGlbBtn.onclick = async () => {
       characterTemplate,
       loadedClips,
       store.getState().project.clips,
+      false,
+      store.getState().project.settings.fps,
     );
     downloadFile('player.glb', bytes, 'model/gltf-binary');
     showToast(`player.glb exported successfully (${(bytes.byteLength / (1024 * 1024)).toFixed(2)} MB)`, 'success');
@@ -146,7 +148,96 @@ const replay = new BallReplay();
 let rig: CharacterRig | null = null;
 let characterTemplate: Object3D | null = null;
 let characterScale = 1;
+/** final, cleaned clip per entry id (what plays, what exports) */
 const loadedClips = new Map<string, AnimationClip>();
+/** parsed source clip per source file, retargeted once (never mutated after) */
+const baseClips = new Map<string, AnimationClip>();
+const rawClips = new Map<string, { raw: AnimationClip; isRokoko: boolean }>();
+/** extracted root motion per entry id ([t, x, z, yaw], untrimmed clip time) */
+const rootSamplesMap = new Map<string, [number, number, number, number][]>();
+let templateHips = 0;
+let hipsToMetres = 1;
+
+/** Rokoko hips reference: a Mixamo idle clip if loaded, else the template's hips. */
+function idleReference(): AnimationClip | undefined {
+  for (const e of store.getState().project.clips) {
+    if (!/^idle/i.test(e.id)) continue;
+    const r = rawClips.get(e.sourceFile);
+    if (r && !r.isRokoko) return r.raw;
+  }
+  if (templateHips > 1e-3) {
+    return new AnimationClip('ref', 0, [
+      new VectorKeyframeTrack('mixamorigHips.position', [0], [0, templateHips, 0]),
+    ]);
+  }
+  return undefined;
+}
+
+/** Retarget every source clip (Mixamo clips first so Rokoko clips get the idle reference). */
+function rebuildBases(): void {
+  baseClips.clear();
+  const ref = idleReference();
+  for (const [file, { raw, isRokoko }] of rawClips) {
+    const c = raw.clone();
+    if (isRokoko) retargetRokoko(c, ref, true);
+    baseClips.set(file, c);
+  }
+}
+
+/**
+ * The one cleanup pipeline: base -> mirror -> smooth -> foot lock -> root motion.
+ * Every action edits the entry's settings and calls this, so cleanups never stack
+ * and a reload rebuilds exactly what was on screen.
+ */
+function rebuildClip(entry: ClipEntry): AnimationClip | undefined {
+  let clip: AnimationClip | undefined;
+  if (entry.cleanup.mirroredFrom) {
+    const src = store.getState().project.clips.find((c) => c.id === entry.cleanup.mirroredFrom);
+    const base = src ? baseClips.get(src.sourceFile) : undefined;
+    if (src && base) clip = mirrorClip(base, src).clip;
+  } else {
+    clip = baseClips.get(entry.sourceFile)?.clone();
+  }
+  if (!clip) return undefined;
+  if (entry.cleanup.smooth > 0) clip = smoothClip(clip, entry.cleanup.smooth, entry.touches);
+  if (entry.cleanup.footLock && characterTemplate && entry.planted.length > 0) {
+    clip = applyFootLock(characterTemplate, characterScale, clip, entry.planted);
+  }
+  rootSamplesMap.delete(entry.id);
+  if (entry.rootMotion.extracted && entry.rootMotion.mode !== 'none') {
+    const res = extractRootMotion(clip, entry.rootMotion.mode, hipsToMetres);
+    clip = res.clip;
+    rootSamplesMap.set(entry.id, res.samples);
+  }
+  clip.name = entry.id;
+  loadedClips.set(entry.id, clip);
+  tracksCache.delete(entry.id);
+  return clip;
+}
+
+function rebuildSelected(entry: ClipEntry): void {
+  const clip = rebuildClip(entry);
+  if (clip && rig) rig.playClip(clip, entry);
+  updateReplay();
+}
+
+async function rebuildAll(): Promise<void> {
+  const project = store.getState().project;
+  for (const e of project.clips) {
+    if (rawClips.has(e.sourceFile) || !e.sourceFile) continue;
+    const buf = await getFileBuffer(e.sourceFile);
+    if (!buf) continue;
+    const obj = parseFbx(buf);
+    const raw = obj.animations?.[0];
+    if (raw) rawClips.set(e.sourceFile, { raw, isRokoko: isRokokoClip(e.sourceFile, raw) });
+  }
+  rebuildBases();
+  loadedClips.clear();
+  for (const e of project.clips) rebuildClip(e);
+  const sel = store.getSelectedClip();
+  if (sel && rig && loadedClips.has(sel.id)) rig.playClip(loadedClips.get(sel.id)!, sel);
+  updateReplay();
+}
 const tracksCache = new Map<string, ClipFootTracks>();
 const clipWarningsMap = new Map<string, number>();
 
@@ -214,32 +305,25 @@ const runBatchAutoDetect = () => {
 const runMirrorClip = () => {
   const clip = store.getSelectedClip();
   if (!clip) return;
-  const raw = loadedClips.get(clip.id);
-  if (!raw) return;
-
-  const mirrored = mirrorClip(raw, clip);
-  loadedClips.set(mirrored.entry.id, mirrored.clip);
+  if (clip.cleanup.mirroredFrom) {
+    showToast('This clip is already a mirror - mirror its source instead', 'warn');
+    return;
+  }
+  const base = baseClips.get(clip.sourceFile);
+  if (!base) return;
+  const mirrored = mirrorClip(base, clip);
   store.addClip(mirrored.entry);
+  rebuildClip(mirrored.entry);
   store.selectClip(mirrored.entry.id);
-  tracksCache.delete(mirrored.entry.id);
   showToast(`Created mirrored clip: ${mirrored.entry.name}`, 'success');
 };
 
 const runSmoothClip = (windowSize: number) => {
   const clip = store.getSelectedClip();
   if (!clip) return;
-  const raw = loadedClips.get(clip.id);
-  if (!raw) return;
-
-  const smoothed = smoothClip(raw, windowSize, clip.touches);
-  loadedClips.set(clip.id, smoothed);
-  store.updateClip(clip.id, {
-    cleanup: { ...clip.cleanup, smooth: windowSize },
-  });
-  if (rig) rig.playClip(smoothed, clip);
-  tracksCache.delete(clip.id);
-  updateReplay();
-  showToast(`Applied ${windowSize}f quaternion smoothing`, 'info');
+  store.updateClip(clip.id, { cleanup: { ...clip.cleanup, smooth: windowSize } });
+  rebuildSelected(clip);
+  showToast(windowSize > 0 ? `Applied ${windowSize}f quaternion smoothing` : 'Smoothing off', 'info');
 };
 
 const runFootLock = () => {
@@ -248,72 +332,60 @@ const runFootLock = () => {
     showToast('Requires loaded character to solve Foot Lock IK', 'warn');
     return;
   }
-  const raw = loadedClips.get(clip.id);
-  if (!raw) return;
-
   if (clip.planted.length === 0) {
     showToast('Detect or add planted intervals first', 'warn');
     return;
   }
-
-  showToast('Solving 2-bone IK foot locking...', 'info');
-  const locked = applyFootLock(characterTemplate, characterScale, raw, clip.planted);
-  loadedClips.set(clip.id, locked);
-  store.updateClip(clip.id, {
-    cleanup: { ...clip.cleanup, footLock: true },
-  });
-  if (rig) rig.playClip(locked, clip);
-  tracksCache.delete(clip.id);
-  updateReplay();
-  showToast('Baked locked planted feet', 'success');
+  const on = !clip.cleanup.footLock;
+  store.updateClip(clip.id, { cleanup: { ...clip.cleanup, footLock: on } });
+  rebuildSelected(clip);
+  showToast(on ? 'Planted feet locked' : 'Foot lock off', 'success');
 };
 
 const runExtractRootMotion = () => {
   const clip = store.getSelectedClip();
   if (!clip) return;
-  const raw = loadedClips.get(clip.id);
-  if (!raw) return;
-
-  const res = extractRootMotion(raw, 'xz');
-  loadedClips.set(clip.id, res.clip);
-  store.updateClip(clip.id, {
-    rootMotion: { extracted: true, mode: 'xz' },
-  });
-  if (rig) rig.playClip(res.clip, clip);
-  tracksCache.delete(clip.id);
-  updateReplay();
-  showToast(`Extracted ${res.samples.length} root motion samples`, 'success');
+  const on = !clip.rootMotion.extracted;
+  store.updateClip(clip.id, { rootMotion: { extracted: on, mode: on ? 'xz' : 'none' } });
+  rebuildSelected(clip);
+  const n = rootSamplesMap.get(clip.id)?.length ?? 0;
+  showToast(on ? `Extracted ${n} root motion samples` : 'Root motion restored', 'success');
 };
 
 const onDropFiles = async (files: FileList) => {
-  for (let i = 0; i < files.length; i++) {
-    const file = files[i];
-    if (!file.name.toLowerCase().endsWith('.fbx')) continue;
-
+  const list = Array.from(files).filter((f) => f.name.toLowerCase().endsWith('.fbx'));
+  let characterChanged = false;
+  for (const file of list) {
     try {
-      if (file.name.toLowerCase().includes('player') || file.name.toLowerCase().includes('character')) {
+      const lower = file.name.toLowerCase();
+      if (lower.includes('player') || lower.includes('character')) {
         const loaded = await importCharacterFile(file);
         characterTemplate = loaded.template;
         characterScale = loaded.scale;
-        tracksCache.clear();
-        spawnCharacter();
+        templateHips = loaded.refHipsY;
+      hipsToMetres = loaded.hipsToMetres;
+        characterChanged = true;
         showToast(`Loaded character: ${file.name}`, 'success');
       } else {
-        const idleClip = loadedClips.get('idle') ?? loadedClips.get('idle_soccer');
-        const { entry, clip } = await importClipFile(file, idleClip);
-        loadedClips.set(entry.id, clip);
-
-        if (rig && store.getState().selectedClipId === entry.id) {
-          rig.playClip(clip, entry);
-        }
-        updateReplay();
-        showToast(`Loaded clip: ${entry.id}`, 'info');
+        const { entry, raw, isRokoko } = await importClipFile(file);
+        rawClips.set(entry.sourceFile, { raw, isRokoko });
       }
     } catch (err) {
       console.error(err);
       showToast(`Failed loading ${file.name}: ${(err as Error).message}`, 'error');
     }
   }
+  // retarget after the whole drop, so an idle in the same drop is the Rokoko reference
+  rebuildBases();
+  for (const e of store.getState().project.clips) rebuildClip(e);
+  if (characterChanged) spawnCharacter();
+  else {
+    const sel = store.getSelectedClip();
+    if (sel && rig && loadedClips.has(sel.id)) rig.playClip(loadedClips.get(sel.id)!, sel);
+    updateReplay();
+  }
+  const n = list.length - (characterChanged ? 1 : 0);
+  if (n > 0) showToast(`Imported ${n} clip${n === 1 ? '' : 's'}`, 'info');
 };
 
 const clipList = new ClipList(main, onDropFiles, runBatchAutoDetect);
@@ -351,47 +423,22 @@ function spawnCharacter(): void {
   }
 }
 
-// 5. Restore from IndexedDB on startup
+// 5. Restore from IndexedDB on startup (rebuilds every cleanup from settings)
 async function restoreProject(): Promise<void> {
   await store.init();
   const state = store.getState();
-
-  // Restore character
   if (state.project.characterFile) {
     const buf = await getFileBuffer(state.project.characterFile);
     if (buf) {
-      const obj = parseFbx(buf);
-      characterTemplate = obj;
-      const rawHeight = 1.8;
-      characterScale = rawHeight > 1e-3 ? 1.8 / rawHeight : 1;
+      const loaded = prepareCharacter(parseFbx(buf));
+      characterTemplate = loaded.template;
+      characterScale = loaded.scale;
+      templateHips = loaded.refHipsY;
+      hipsToMetres = loaded.hipsToMetres;
       spawnCharacter();
     }
   }
-
-  // Restore clips
-  for (const entry of state.project.clips) {
-    const buf = await getFileBuffer(entry.sourceFile);
-    if (buf) {
-      const obj = parseFbx(buf);
-      if (obj.animations && obj.animations.length > 0) {
-        const clip = obj.animations[0];
-        const isRokoko =
-          entry.sourceFile.toLowerCase().includes('rokoko') ||
-          clip.tracks.some((t) => t.name.startsWith('mixamorigReference'));
-        if (isRokoko) {
-          retargetRokoko(clip, loadedClips.get('idle'));
-        }
-        clip.name = entry.id;
-        loadedClips.set(entry.id, clip);
-      }
-    }
-  }
-
-  const selected = store.getSelectedClip();
-  if (selected && loadedClips.has(selected.id) && rig) {
-    rig.playClip(loadedClips.get(selected.id)!, selected);
-    updateReplay();
-  }
+  await rebuildAll();
 }
 
 restoreProject().catch((err) => console.error('Failed restoring project', err));
@@ -401,6 +448,11 @@ function updateReplay(): void {
   if (!clip) return;
   const tracks = getOrComputeTracks(clip.id);
   const res = replay.simulate(clip, tracks);
+  overlays.rootAt = (t: number) => {
+    if (!tracks || tracks.points.length === 0) return { x: 0, z: 0 };
+    const i = Math.min(tracks.points.length - 1, Math.max(0, Math.round((clip.in + t) * tracks.fps)));
+    return tracks.points[i].hips;
+  };
 
   overlays.updateTrajectory(res.samples);
   overlays.updateTouchGizmos(clip.touches, store.getState().selectedTouchId);
@@ -424,6 +476,7 @@ function playChain(chain: ChainItem[]): void {
 let activeClipId: string | null = null;
 let activeTouchId: string | null = null;
 let activeTouchCount = -1;
+let activeTouchesRef: unknown = null;
 
 store.subscribe((state) => {
   const clip = store.getSelectedClip();
@@ -433,7 +486,12 @@ store.subscribe((state) => {
       rig.playClip(loadedClips.get(clip.id)!, clip);
     }
     updateReplay();
-  } else if (clip && (clip.touches.length !== activeTouchCount || state.selectedTouchId !== activeTouchId)) {
+  } else if (
+    clip &&
+    (clip.touches !== activeTouchesRef || clip.touches.length !== activeTouchCount || state.selectedTouchId !== activeTouchId)
+  ) {
+    // touches array identity changes on every edit/drag (updateClip copies it) -> re-simulate
+    activeTouchesRef = clip.touches;
     activeTouchCount = clip.touches.length;
     activeTouchId = state.selectedTouchId;
     updateReplay();
