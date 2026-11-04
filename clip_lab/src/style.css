@@ -389,3 +389,122 @@ body, html {
   font-size: 12px;
 }
 
+/* Timeline */
+.timeline-container {
+  width: 100%;
+  height: 130px;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  position: relative;
+  overflow: hidden;
+  display: flex;
+}
+
+.timeline-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: crosshair;
+}
+
+/* Inspector additions */
+.section-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+  text-transform: uppercase;
+}
+
+.touch-editor-section {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.badge-auto {
+  background: rgba(245, 158, 11, 0.2);
+  color: var(--amber);
+  border: 1px solid var(--amber);
+  font-size: 9px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  margin-left: 6px;
+}
+
+.inspector-tools {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.warning-section {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.warning-title {
+  color: var(--red);
+}
+
+.warning-item {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--text);
+  cursor: pointer;
+  margin-bottom: 4px;
+}
+
+.warning-item:hover {
+  background: rgba(239, 68, 68, 0.2);
+}
+
+.warning-time {
+  font-weight: 600;
+  color: var(--red);
+  font-family: monospace;
+}
+
+.btn-secondary {
+  background: var(--raised);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.btn-danger {
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid var(--red);
+  color: var(--red);
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.btn-danger:hover {
+  background: var(--red);
+  color: #fff;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+
