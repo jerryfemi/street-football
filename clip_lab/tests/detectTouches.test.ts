@@ -58,14 +58,15 @@ describe('Touch Detection', () => {
     for (let i = touchFrame - 3; i < touchFrame; i++) {
       tracks.points[i].toeR.y = 0.08;
       tracks.points[i].ankleR.y = 0.12;
-      tracks.points[i].toeR.z = 0.25;
-      tracks.points[i].toeVelR = { x: -0.5, y: -0.2, z: 2.2, speed: 2.26, speedH: 2.25 };
+      tracks.points[i].toeR.z = tracks.points[i].hips.z + 0.25;
+      // body jogs at 1.5 m/s, so the swing must be ~1.2 m/s faster than the hips to count
+      tracks.points[i].toeVelR = { x: -0.5, y: -0.2, z: 3.0, speed: 3.05, speedH: 3.04 };
     }
 
     // Impact at frame 12
     tracks.points[touchFrame].toeR.y = 0.05;
     tracks.points[touchFrame].ankleR.y = 0.10;
-    tracks.points[touchFrame].toeR.z = 0.32;
+    tracks.points[touchFrame].toeR.z = tracks.points[touchFrame].hips.z + 0.32;
     tracks.points[touchFrame].toeVelR = { x: 0.1, y: 0.1, z: 0.4, speed: 0.42, speedH: 0.41 };
 
     const clip: ClipEntry = {
