@@ -1,5 +1,6 @@
-import { Vector3 } from 'three';
-import { BALL, BLOCK, DRIBBLE, GOAL, PLAYER, ROUND, SHOT, SLIDE, TACKLE } from '../config';
+import { Vector3, type Object3D } from 'three';
+import { BALL, BLOCK, CONTACT, DRIBBLE, GOAL, PLAYER, RESTITUTION, ROUND, SHOT, SLIDE, TACKLE } from '../config';
+import { closestOnSegment, segmentsCrossXZ, type BodyPart } from '../physics/BodyColliders';
 import type { Ball } from '../ball/Ball';
 import type { DefenderAI } from '../controllers/DefenderAI';
 import type { PlayerIntent } from '../controllers/types';
@@ -17,6 +18,13 @@ export interface MatchListener {
 const _a = new Vector3();
 const _b = new Vector3();
 const _f = new Vector3();
+const _c = new Vector3();
+const _n = new Vector3();
+const _q = new Vector3();
+const _vp = new Vector3();
+const _vb = new Vector3();
+const _rel = new Vector3();
+const _prev = new Vector3();
 const _r = new Vector3();
 
 /**
@@ -39,6 +47,13 @@ export class Match {
   private lastBeatAt = 0;
   private lastTouchAt = 0;
   private beatSeen = false;
+  private pannaUntil = 0;
+  /** seconds the ball has been within a foot's reach, [attacker, defender] */
+  private readonly reachTime = [0, 0];
+  private lastNutmegAt = -9;
+  private ghostUntil = -9;
+  private lastImpactAt = -9;
+  private lastShotAt = -9;
   private lastBeatX = 0.1;
   /** measured seconds between dribble beats (adapts to the clip and its playback speed) */
   private beatGap = 0.43;
@@ -139,9 +154,14 @@ export class Match {
     this.resolveKick(defender);
     this.resolveTackle();
 
+    _prev.copy(ball.pos);
     if (ball.owner) {
       const o = ball.owner;
       this.carryBall(o, dt);
+      // the dribbled ball can run into the defender's legs (or slip through them)
+      if (o === attacker && this.phase === 'live') {
+        if (!this.ballVsBody(defender, _prev, dt)) this.checkNutmeg(_prev);
+      }
       // Lost touch: ball got away from him - it's loose now and he goes after it automatically.
       if (ball.owner === o && o.state === 'free' && Math.hypot(ball.pos.x - o.pos.x, ball.pos.z - o.pos.z) > DRIBBLE.loseDistance) {
         ball.owner = null;
@@ -158,8 +178,21 @@ export class Match {
         attacker.celebrate();
         this.endRound('goal', 'GOAL!');
       }
-      this.bodyBlocks();
+      // controllable balls are trapped first; only what isn't collected bounces off bodies
       this.pickups();
+      if (!ball.owner) {
+        let hit = false;
+        const spd = Math.hypot(ball.vel.x, ball.vel.z);
+        for (const p of [attacker, defender]) {
+          // the player who just kicked it doesn't collide with it for a moment
+          if (ball.lastTouch === p && ball.noPickupTimer > 0) continue;
+          // a slow ball doesn't get "kicked" by the attacker's own running legs - he's going to trap it
+          if (p === attacker && spd < CONTACT.controlSpeed) continue;
+          if (p.colliders.length) hit = this.ballVsBody(p, _prev, dt) || hit;
+        }
+        if (!hit && ball.lastTouch === attacker) this.checkNutmeg(_prev);
+        this.bodyBlocks(); // placeholder bodies only
+      }
     }
   }
 
@@ -189,8 +222,14 @@ export class Match {
     ball.kick(defender, _a.x, 0, _a.z);
   }
 
-  private endRound(kind: 'goal' | 'defended', text: string): void {
+  private endRound(kind: 'goal' | 'defended' | 'foul', text: string): void {
     if (this.phase !== 'live') return;
+    if (kind === 'foul') {
+      // foul: no point either way, replay the round
+      this.setPhase('defended');
+      this.listener.onMessage(text, 'info');
+      return;
+    }
     if (kind === 'defended') {
       this.score.defender++;
       this.listener.onScore(this.score.attacker, this.score.defender);
@@ -477,6 +516,7 @@ export class Match {
     _a.set(tx - this.ball.pos.x, 0, GOAL.z - this.ball.pos.z).normalize();
     const vy = lift * speed + ty * 0.5;
     this.ball.kick(p, _a.x * speed, vy, _a.z * speed);
+    this.lastShotAt = this.clock;
   }
 
   private resolveTackle(): void {
@@ -492,13 +532,36 @@ export class Match {
       return;
     }
     const ball = this.ball;
-    if (ball.owner !== this.attacker || this.attacker.isProtected) return;
+    if (ball.owner !== this.attacker) return;
+    const att = this.attacker;
+    // Which does the tackling foot reach first: the ball or his legs?
+    if (d.hasFeet && att.colliders.length) {
+      const f = d.footPos[0].distanceTo(ball.pos) < d.footPos[1].distanceTo(ball.pos) ? d.footPos[0] : d.footPos[1];
+      const dBall = f.distanceTo(ball.pos) - BALL.radius;
+      let dLeg = Infinity;
+      for (const c of att.colliders) {
+        if (c.part !== 'shin' && c.part !== 'foot') continue;
+        closestOnSegment(c.a, c.b, f, _c);
+        dLeg = Math.min(dLeg, f.distanceTo(_c) - c.r);
+      }
+      if (dLeg < CONTACT.tripReach && dLeg + 0.04 < dBall) {
+        this.tackleHit = true;
+        forwardFromYaw(d.yaw, _b);
+        att.stagger(_b.x, _b.z, 1, 'stumble');
+        this.hitBone(att, 'shin', _b.x, _b.z, 1);
+        ball.kick(att, ball.vel.x * 0.5 + _b.x, 0, ball.vel.z * 0.5 + _b.z);
+        this.endRound('foul', 'FOUL!');
+        return;
+      }
+    }
+    if (att.isProtected) return;
     d.footPoint(_a, 0.6);
     if (_a.distanceTo(ball.pos) < reach) {
       this.tackleHit = true;
       forwardFromYaw(d.yaw, _b).multiplyScalar(3.5);
       ball.kick(d, _b.x, 0.5, _b.z);
-      this.attacker.stumble();
+      // got the ball first: he rides over the challenge, stumbling in the direction he was going
+      this.attacker.stagger(this.attacker.vel.x || _b.x, this.attacker.vel.z || _b.z, 0.5 + this.attacker.speed / 14);
       this.endRound('defended', 'TACKLED!');
     }
   }
@@ -508,6 +571,7 @@ export class Match {
     const ball = this.ball;
     if (ball.pos.y > 1.6) return;
     for (const p of [this.attacker, this.defender]) {
+      if (p.colliders.length) continue; // real bodies use the capsule contact layer
       if (ball.lastTouch === p && ball.noPickupTimer > 0) continue;
       const dx = ball.pos.x - p.pos.x;
       const dz = ball.pos.z - p.pos.z;
@@ -536,6 +600,8 @@ export class Match {
   private pickups(): void {
     const ball = this.ball;
     if (ball.pos.y > 0.6) return;
+    // too hot to control: a fast ball bounces off bodies instead (contact layer)
+    if (Math.hypot(ball.vel.x, ball.vel.z) > CONTACT.controlSpeed) return;
     let best: Player | null = null;
     let bestD: number = BALL.pickupRadius;
     for (const p of [this.attacker, this.defender]) {
@@ -543,8 +609,30 @@ export class Match {
       if (p.state === 'skill' && !p.skillReleased) continue;
       if (ball.lastTouch === p && ball.noPickupTimer > 0) continue;
       if (p === this.defender && this.phase === 'check') continue;
-      p.footPoint(_a, 0.35);
-      const d = Math.hypot(_a.x - ball.pos.x, _a.z - ball.pos.z);
+      let d: number;
+      if (p.hasFeet) {
+        // real bodies: a FOOT has to get to it, and only after a short reaction time -
+        // a ball zipping between his feet goes through before he can trap it
+        d = Math.min(
+          Math.hypot(p.footPos[0].x - ball.pos.x, p.footPos[0].z - ball.pos.z),
+          Math.hypot(p.footPos[1].x - ball.pos.x, p.footPos[1].z - ball.pos.z),
+        );
+        const k = p === this.attacker ? 0 : 1;
+        if (d < CONTACT.footPickup) this.reachTime[k] += 1 / 60;
+        else this.reachTime[k] = 0;
+        const need = p === this.attacker ? CONTACT.reactAttacker : CONTACT.reactDefender;
+        const spd = Math.hypot(ball.vel.x, ball.vel.z);
+        if (this.reachTime[k] < need && spd > 1.5) continue;
+        if (d >= CONTACT.footPickup) {
+          // also allow the classic "ball at his feet in front of him" when it's slow
+          p.footPoint(_a, 0.35);
+          d = Math.hypot(_a.x - ball.pos.x, _a.z - ball.pos.z);
+          if (spd > 2.5) continue;
+        }
+      } else {
+        p.footPoint(_a, 0.35);
+        d = Math.hypot(_a.x - ball.pos.x, _a.z - ball.pos.z);
+      }
       if (d < bestD) {
         bestD = d;
         best = p;
@@ -572,23 +660,151 @@ export class Match {
       this.listener.onMessage('GO!', 'info');
     } else if (this.phase === 'live' && best === this.defender) {
       this.endRound('defended', 'DEFENDED!');
+    } else if (this.phase === 'live' && best === this.attacker && this.clock < this.pannaUntil) {
+      // Nutmegged him AND got it back the other side: panna = instant round win.
+      this.pannaUntil = 0;
+      this.score.attacker++;
+      this.listener.onScore(this.score.attacker, this.score.defender);
+      this.attacker.celebrate();
+      this.endRound('goal', 'PANNA!');
     }
   }
 
+  /**
+   * Bodies: push apart, and when they meet with real closing speed it's an IMPACT - whoever is
+   * carrying less momentum into it (or is mid-skill / off balance) gets knocked back.
+   */
   private separatePlayers(): void {
-    const a = this.attacker.pos;
-    const b = this.defender.pos;
-    const dx = b.x - a.x;
-    const dz = b.z - a.z;
+    const A = this.attacker;
+    const B = this.defender;
+    const dx = B.pos.x - A.pos.x;
+    const dz = B.pos.z - A.pos.z;
     const min = PLAYER.radius * 2;
     const d2 = dx * dx + dz * dz;
-    if (d2 < min * min && d2 > 1e-8) {
-      const d = Math.sqrt(d2);
-      const push = (min - d) / 2;
-      a.x -= (dx / d) * push;
-      a.z -= (dz / d) * push;
-      b.x += (dx / d) * push;
-      b.z += (dz / d) * push;
+    if (d2 >= min * min || d2 < 1e-8) return;
+    const d = Math.sqrt(d2);
+    const nx = dx / d;
+    const nz = dz / d;
+    const push = (min - d) / 2;
+    A.pos.x -= nx * push;
+    A.pos.z -= nz * push;
+    B.pos.x += nx * push;
+    B.pos.z += nz * push;
+
+    const into = A.vel.x * nx + A.vel.z * nz; // A moving toward B
+    const intoB = -(B.vel.x * nx + B.vel.z * nz); // B moving toward A
+    const closing = into + intoB;
+    if (closing < CONTACT.bumpSpeed || this.clock - this.lastImpactAt < 0.5) return;
+    this.lastImpactAt = this.clock;
+    const strength = Math.min(1, (closing - CONTACT.bumpSpeed) / 5 + 0.25);
+    // balance: momentum into the contact, worse if mid-skill/shot or already stumbling
+    const bal = (p: Player, m: number) => m + (p.state === 'free' ? 1 : -1.5) + (p.speed < 1.2 && p.state === 'free' ? 8 : 0);
+    const loser = bal(A, into) < bal(B, intoB) ? A : B;
+    const sgn = loser === A ? -1 : 1;
+    this.hitBone(A, 'chest', nx, nz, strength);
+    this.hitBone(B, 'chest', -nx, -nz, strength);
+    if (strength > 0.45) loser.stagger(nx * sgn, nz * sgn, strength, 'stumble_back');
+    else loser.vel.multiplyScalar(0.4);
+    const winner = loser === A ? B : A;
+    winner.vel.multiplyScalar(0.7);
+  }
+
+  // ------------------------------------------------------------------ contact layer
+
+  /**
+   * Swept ball-vs-capsules for one player. Response uses the bone's own velocity, so a lunging
+   * foot fires the ball away while a planted foot kills it. Returns true if anything was hit.
+   */
+  private ballVsBody(p: Player, from: Vector3, dt: number): boolean {
+    const ball = this.ball;
+    if (!p.colliders.length || ball.pos.y > 2.2) return false;
+    if (p === this.defender && this.clock < this.ghostUntil) return false; // ball already through his legs
+    const R = BALL.radius;
+    const dist = from.distanceTo(ball.pos);
+    const steps = Math.min(10, Math.max(1, Math.ceil(dist / 0.05)));
+    for (let s = 1; s <= steps; s++) {
+      _q.lerpVectors(from, ball.pos, s / steps);
+      for (const c of p.colliders) {
+        const t = closestOnSegment(c.a, c.b, _q, _c);
+        _n.subVectors(_q, _c);
+        const dd = _n.length();
+        if (dd >= c.r + R || dd < 1e-6) continue;
+        _n.divideScalar(dd);
+        // velocity of that point of the bone
+        _vp.subVectors(c.a, c.pa).lerp(_vb.subVectors(c.b, c.pb), t).divideScalar(Math.max(dt, 1e-4));
+        _rel.subVectors(ball.vel, _vp);
+        const vn = _rel.dot(_n);
+        if (vn >= 0) continue; // separating already
+        const planted = _vp.length() < 0.5 && (c.part === 'foot' || c.part === 'shin');
+        const e = planted ? 0.12 : RESTITUTION[c.part];
+        // reflect normal part, keep most of the tangential part
+        _rel.addScaledVector(_n, -(1 + e) * vn);
+        _rel.multiplyScalar(0.85);
+        ball.vel.copy(_vp).add(_rel);
+        ball.pos.copy(_c).addScaledVector(_n, c.r + R + 0.005);
+        if (ball.pos.y < R) ball.pos.y = R;
+        this.onBallHitsBody(p, c.part, c.side, -vn, _n.x, _n.z, c.boneA);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Reaction picker for ball-on-body contact. */
+  private onBallHitsBody(p: Player, part: BodyPart, _side: number, speed: number, nx: number, nz: number, bone: Object3D): void {
+    const ball = this.ball;
+    const owned = ball.owner;
+    if (owned && owned !== p) {
+      // dribbled into his legs: it's loose
+      ball.owner = null;
+      ball.lastTouch = p;
+      ball.noPickupTimer = 0.12;
+    } else if (!owned) {
+      ball.lastTouch = p;
+      ball.noPickupTimer = Math.max(ball.noPickupTimer, 0.1);
+    }
+    p.hitReact(bone, -nx, -nz, speed / 12);
+    if (speed > CONTACT.staggerBallSpeed && (part === 'torso' || part === 'chest' || part === 'head')) {
+      p.stagger(-nx, -nz, (speed - CONTACT.staggerBallSpeed) / 10 + 0.2, 'stumble_back');
+    }
+    if (this.phase === 'live' && p === this.defender && speed > 7 && this.lastShotAt > this.clock - 1.5) {
+      const where = part === 'head' ? 'HEADED AWAY' : part === 'chest' || part === 'torso' ? 'CHESTED' : 'BLOCKED';
+      this.listener.onMessage(where, 'bad');
     }
   }
+
+  /**
+   * Nutmeg: the ball crossed the line between the defender's feet without touching a leg,
+   * low enough to go under him. Gap size comes from his actual stance.
+   */
+  private checkNutmeg(from: Vector3): void {
+    const d = this.defender;
+    const ball = this.ball;
+    if (!d.hasFeet || ball.pos.y > 0.35 || this.phase !== 'live') return;
+    const L = d.footPos[0];
+    const Rf = d.footPos[1];
+    const gap = Math.hypot(L.x - Rf.x, L.z - Rf.z);
+    if (gap < CONTACT.minNutmegGap) return;
+    if (!segmentsCrossXZ(from.x, from.z, ball.pos.x, ball.pos.z, L.x, L.z, Rf.x, Rf.z)) return;
+    if (this.clock - this.lastNutmegAt < 1) return;
+    this.lastNutmegAt = this.clock;
+    this.pannaUntil = this.clock + CONTACT.pannaWindow;
+    this.ghostUntil = this.clock + 0.45;
+    this.listener.onMessage('NUTMEG!', 'good');
+    // he has to turn round: lose balance in the ball's direction
+    d.stagger(ball.vel.x || -d.vel.x, ball.vel.z || -d.vel.z, 0.55, 'stumble_back');
+    if (ball.owner === this.attacker) {
+      ball.owner = null;
+      ball.lastTouch = this.attacker;
+      ball.noPickupTimer = 0;
+      this.attacker.autoChase = 1.4;
+    }
+  }
+
+  /** Kick a named body part's bone (procedural hit layered over animation). */
+  private hitBone(p: Player, part: BodyPart, dx: number, dz: number, strength: number): void {
+    const c = p.colliders.find((k) => k.part === part);
+    if (c) p.hitReact(c.boneA, dx, dz, strength);
+  }
+
 }
