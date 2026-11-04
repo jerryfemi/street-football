@@ -23,6 +23,8 @@ const _qHips = new Quaternion();
 export function extractRootMotion(
   clip: AnimationClip,
   mode: 'none' | 'xz' | 'xz+yaw' = 'xz',
+  /** character scale (FBX units -> metres); samples are exported in metres */
+  scale = 1,
 ): RootMotionResult {
   if (mode === 'none') {
     return {
@@ -88,8 +90,8 @@ export function extractRootMotion(
 
     samples.push([
       Number(times[i].toFixed(4)),
-      Number(deltaX.toFixed(4)),
-      Number(deltaZ.toFixed(4)),
+      Number((deltaX * scale).toFixed(4)),
+      Number((deltaZ * scale).toFixed(4)),
       Number(yaw.toFixed(4)),
     ]);
 
