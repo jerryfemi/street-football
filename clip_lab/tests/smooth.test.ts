@@ -46,3 +46,4 @@ describe('Smoothing Algorithm (§7.5)', () => {
     expect(Math.abs(smoothedTrack.values[midIdx])).toBeLessThan(Math.abs(values[midIdx]));
   });
 });
+

@@ -7,6 +7,8 @@ import { Inspector } from './panels/Inspector';
 import { Timeline } from './timeline/Timeline';
 import { Transport } from './timeline/Transport';
 import { BlendTester, type ChainItem } from './panels/BlendTester';
+import { ShortcutsModal } from './panels/ShortcutsModal';
+import { VideoSync } from './panels/VideoSync';
 import { Viewport } from './scene/Viewport';
 import { CharacterRig } from './scene/CharacterRig';
 import { BallReplay } from './scene/BallReplay';
@@ -21,11 +23,17 @@ import { mirrorClip } from './analysis/mirror';
 import { smoothClip } from './analysis/smooth';
 import { applyFootLock } from './analysis/footLock';
 import { extractRootMotion } from './analysis/rootMotion';
-import { buildClipsJson, downloadFile, exportPlayerGlb } from './io/exportGame';
+import {
+  buildClipsJson,
+  downloadFile,
+  exportPlayerGlb,
+  exportProjectFile,
+  importProjectFile,
+} from './io/exportGame';
 
 const app = document.getElementById('app')!;
 
-// 1. Build Header with Blend Tester and Export Buttons
+// 1. Build Header with Polish Tools (Shortcuts, Project, Blend Tester, Export)
 const header = document.createElement('header');
 header.className = 'app-header';
 
@@ -37,6 +45,42 @@ header.appendChild(title);
 const headerActions = document.createElement('div');
 headerActions.className = 'header-actions';
 
+const shortcutsBtn = document.createElement('button');
+shortcutsBtn.className = 'btn-secondary';
+shortcutsBtn.textContent = '⌨ Shortcuts (?)';
+shortcutsBtn.onclick = () => shortcutsModal.toggle();
+
+const saveProjectBtn = document.createElement('button');
+saveProjectBtn.className = 'btn-secondary';
+saveProjectBtn.textContent = '💾 Save Project';
+saveProjectBtn.onclick = () => {
+  exportProjectFile(store.getState().project);
+  showToast('Project file exported as project.cliplab.json', 'success');
+};
+
+const loadProjectLabel = document.createElement('label');
+loadProjectLabel.className = 'btn-secondary';
+loadProjectLabel.textContent = '📂 Load Project';
+const loadProjectInput = document.createElement('input');
+loadProjectInput.type = 'file';
+loadProjectInput.accept = '.json';
+loadProjectInput.style.display = 'none';
+loadProjectInput.onchange = async (e) => {
+  const file = (e.target as HTMLInputElement).files?.[0];
+  if (file) {
+    try {
+      const proj = await importProjectFile(file);
+      await store.init();
+      store.getState().project.clips = proj.clips;
+      store.getState().project.characterFile = proj.characterFile;
+      showToast(`Imported project with ${proj.clips.length} clips`, 'success');
+    } catch (err) {
+      showToast(`Failed loading project: ${(err as Error).message}`, 'error');
+    }
+  }
+};
+loadProjectLabel.appendChild(loadProjectInput);
+
 const blendBtn = document.createElement('button');
 blendBtn.className = 'btn-secondary';
 blendBtn.textContent = '🔗 Blend Tester';
@@ -44,7 +88,7 @@ blendBtn.onclick = () => blendTester.toggle();
 
 const exportJsonBtn = document.createElement('button');
 exportJsonBtn.className = 'btn-secondary';
-exportJsonBtn.textContent = '📥 Export clips.json';
+exportJsonBtn.textContent = '📥 clips.json';
 exportJsonBtn.onclick = () => {
   const project = store.getState().project;
   const data = buildClipsJson(project);
@@ -54,7 +98,7 @@ exportJsonBtn.onclick = () => {
 
 const exportGlbBtn = document.createElement('button');
 exportGlbBtn.className = 'btn-secondary';
-exportGlbBtn.textContent = '📦 Export player.glb';
+exportGlbBtn.textContent = '📦 player.glb';
 exportGlbBtn.onclick = async () => {
   if (!characterTemplate) {
     showToast('No character loaded to export GLB', 'warn');
@@ -75,7 +119,7 @@ exportGlbBtn.onclick = async () => {
   }
 };
 
-headerActions.append(blendBtn, exportJsonBtn, exportGlbBtn);
+headerActions.append(shortcutsBtn, saveProjectBtn, loadProjectLabel, blendBtn, exportJsonBtn, exportGlbBtn);
 header.appendChild(headerActions);
 app.appendChild(header);
 
@@ -88,8 +132,11 @@ viewportContainer.className = 'viewport-container';
 
 app.appendChild(main);
 
-// 3. Initialize Panels & Viewport
+// 3. Initialize Panels, Viewport & Video Sync
 initToasts(document.body);
+const shortcutsModal = new ShortcutsModal(document.body);
+const videoSync = new VideoSync(viewportContainer);
+
 const viewport = new Viewport(viewportContainer);
 const overlays = new Overlays(viewport.camera, viewport.renderer.domElement);
 viewport.scene.add(overlays.group);
@@ -101,6 +148,7 @@ let characterTemplate: Object3D | null = null;
 let characterScale = 1;
 const loadedClips = new Map<string, AnimationClip>();
 const tracksCache = new Map<string, ClipFootTracks>();
+const clipWarningsMap = new Map<string, number>();
 
 const getOrComputeTracks = (clipId: string): ClipFootTracks | undefined => {
   if (tracksCache.has(clipId)) return tracksCache.get(clipId);
@@ -138,6 +186,29 @@ const runAutoFillPlanted = () => {
   store.updateClip(clip.id, { planted });
   timeline.draw();
   showToast(`Detected ${planted.length} planted intervals`, 'info');
+};
+
+const runBatchAutoDetect = () => {
+  const state = store.getState();
+  if (!characterTemplate) {
+    showToast('Load a character FBX first before running batch detection', 'warn');
+    return;
+  }
+  let count = 0;
+  for (const c of state.project.clips) {
+    const tracks = getOrComputeTracks(c.id);
+    if (!tracks) continue;
+    const touches = detectTouches(tracks, c);
+    const planted = detectPlanted(tracks, c);
+    store.updateClip(c.id, { touches, planted });
+
+    const rep = replay.simulate(c, tracks);
+    clipWarningsMap.set(c.id, rep.warnings.length);
+    count++;
+  }
+  clipList.setWarningsMap(clipWarningsMap);
+  updateReplay();
+  showToast(`Batch processed ${count} clips!`, 'success');
 };
 
 const runMirrorClip = () => {
@@ -185,7 +256,7 @@ const runFootLock = () => {
     return;
   }
 
-  showToast('Solving 2-bone IK planted foot lock...', 'info');
+  showToast('Solving 2-bone IK foot locking...', 'info');
   const locked = applyFootLock(characterTemplate, characterScale, raw, clip.planted);
   loadedClips.set(clip.id, locked);
   store.updateClip(clip.id, {
@@ -245,7 +316,7 @@ const onDropFiles = async (files: FileList) => {
   }
 };
 
-new ClipList(main, onDropFiles);
+const clipList = new ClipList(main, onDropFiles, runBatchAutoDetect);
 main.appendChild(viewportContainer);
 const inspector = new Inspector(
   main,
@@ -335,6 +406,9 @@ function updateReplay(): void {
   overlays.updateTouchGizmos(clip.touches, store.getState().selectedTouchId);
   timeline.setWarnings(res.warnings);
   inspector.setWarnings(res.warnings);
+
+  clipWarningsMap.set(clip.id, res.warnings.length);
+  clipList.setWarningsMap(clipWarningsMap);
 }
 
 // Chain playback player
@@ -364,6 +438,8 @@ store.subscribe((state) => {
     activeTouchId = state.selectedTouchId;
     updateReplay();
   }
+
+  videoSync.setPlaying(state.isPlaying);
 });
 
 // 7. Keyboard Shortcuts
@@ -487,6 +563,9 @@ function loop(now: number): void {
   if (clip) {
     replay.sampleAt(state.currentTime, viewport.ballMesh.position);
   }
+
+  // Sync reference video playback
+  videoSync.syncTime(state.currentTime);
 
   viewport.render();
 }
