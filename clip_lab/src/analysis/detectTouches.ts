@@ -16,13 +16,13 @@ export interface DetectionThresholds {
 export const defaultDetectionThresholds: DetectionThresholds = {
   maxToeHeight: 0.12,
   maxAnkleHeight: 0.16,
-  minPreSpeed: 1.0, // generous for varying mocap speeds
-  minSpeedDropPct: 0.30,
-  minDirectionChangeDeg: 35,
-  minZ: -0.2,
+  minPreSpeed: 1.2,
+  minSpeedDropPct: 0.35,
+  minDirectionChangeDeg: 40,
+  minZ: 0.1, // ball is in front of the body; a foot landing beside the hips is a plant, not a touch
   maxZ: 0.8,
   maxX: 0.55,
-  suppressionWindowS: 0.15,
+  suppressionWindowS: 0.2,
 };
 
 interface Candidate {
@@ -55,8 +55,10 @@ export function detectTouches(
         continue;
       }
 
-      // 2. Front zone check
-      if (toe.z < thresholds.minZ || toe.z > thresholds.maxZ || Math.abs(toe.x) > thresholds.maxX) {
+      // 2. Front zone check, relative to the root (hips ground point) so moving clips work
+      const relX = toe.x - cur.hips.x;
+      const relZ = toe.z - cur.hips.z;
+      if (relZ < thresholds.minZ || relZ > thresholds.maxZ || Math.abs(relX) > thresholds.maxX) {
         continue;
       }
 
@@ -127,6 +129,7 @@ export function detectTouches(
 
   // Convert candidates into Touch objects with smart defaults
   const result: Touch[] = [];
+  const hipsAt: { x: number; z: number }[] = [];
   const isSkill = clip.tags.includes('skill');
 
   for (let idx = 0; idx < filteredCandidates.length; idx++) {
@@ -155,11 +158,15 @@ export function detectTouches(
       else if (idx === filteredCandidates.length - 1) type = 'push';
     }
 
-    // Ball contact point 'at': toe ground projection + 0.11 m forward offset along foot direction
-    const footDirZ = 1.0;
-    const footDirX = cand.foot === 'L' ? -0.15 : 0.15;
-    const atX = Number((toe.x + footDirX * 0.11).toFixed(3));
-    const atZ = Number((toe.z + footDirZ * 0.11).toFixed(3));
+    // Ball contact point 'at': toe + ball radius along the foot's swing direction,
+    // relative to the root at the moment of contact (contract §6)
+    const hips = cand.point.hips;
+    const vh = Math.hypot(vel.x, vel.z);
+    const footDirX = vh > 0.3 ? vel.x / vh : 0;
+    const footDirZ = vh > 0.3 ? vel.z / vh : 1;
+    const atX = Number((toe.x - hips.x + footDirX * 0.11).toFixed(3));
+    const atZ = Number((toe.z - hips.z + footDirZ * 0.11).toFixed(3));
+    hipsAt.push({ x: hips.x, z: hips.z });
 
     const touch: Touch = {
       id: `touch_${cand.foot}_${Math.round(cand.tTrimmed * 1000)}`,
@@ -180,7 +187,11 @@ export function detectTouches(
     const next = result[idx + 1];
 
     if (next) {
-      cur.to = { x: next.at.x, z: next.at.z };
+      // next touch's 'at', moved into this touch's root frame (the body travels in between)
+      cur.to = {
+        x: Number((next.at.x + hipsAt[idx + 1].x - hipsAt[idx].x).toFixed(3)),
+        z: Number((next.at.z + hipsAt[idx + 1].z - hipsAt[idx].z).toFixed(3)),
+      };
       cur.arrive = Number(Math.max(0.1, next.t - cur.t).toFixed(3));
     } else {
       // Last touch: project forward 1.2 m
