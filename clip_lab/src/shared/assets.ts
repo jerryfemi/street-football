@@ -48,18 +48,22 @@ export function retargetRokoko(clip: AnimationClip, idle?: AnimationClip, keepRo
   const hips = clip.tracks.find((t) => t.name === 'mixamorigHips.position');
   if (!hips) return;
   const ref = idle?.tracks.find((t) => t.name === 'mixamorigHips.position')?.values;
-  const rx = ref ? ref[0] : 0;
-  const ry = ref ? ref[1] : hips.values[1];
-  const rz = ref ? ref[2] : 0;
   const v = hips.values;
-  // Rokoko's first frame is often a snap from the reference pose; use the 3rd frame as standing height
-  const y0 = v.length > 9 ? v[7] : v[1];
+  // Rokoko's first frame is often a snap from the reference pose; use the 3rd frame as standing pose
+  const f0 = v.length > 9 ? 6 : 0;
+  const rx = ref ? ref[0] : 0;
+  const ry = ref ? ref[1] : v[f0 + 1];
+  const rz = ref ? ref[2] : 0;
+  // CLIP LAB: the actor's units/height differ from the character's, so travel is scaled by the
+  // same ratio as height and rebased onto the reference (raw Rokoko XZ sits metres off origin).
+  // The game passes keepRootMotion = false, which is identical to its own retargetRokoko.
+  const ratio = ry / (v[f0 + 1] || 1);
+  const x0 = v[f0];
+  const z0 = v[f0 + 2];
   for (let k = 0; k < v.length; k += 3) {
-    if (!keepRootMotion) {
-      v[k] = rx;
-      v[k + 2] = rz;
-    }
-    v[k + 1] = ry * (v[k + 1] / (y0 || 1));
+    v[k] = keepRootMotion ? rx + (v[k] - x0) * ratio : rx;
+    v[k + 1] = v[k + 1] * ratio;
+    v[k + 2] = keepRootMotion ? rz + (v[k + 2] - z0) * ratio : rz;
   }
 }
 
