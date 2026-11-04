@@ -40,7 +40,7 @@ updating the doc.**
 | Persistence | IndexedDB (via a tiny wrapper, no library needed) + File System Access API for "send to game" (with download fallback) |
 | Tests | `vitest` for pure logic (touch detection, mirroring, smoothing, JSON schema) |
 
-Location: `C:\Users\jerem\StudioProjects\clip_lab\` (sibling of `panna_verse`).
+Location: `clip_lab/` (inside the `panna_verse` repository).
 
 ### Code sharing with the game
 The retargeting rules MUST match the game exactly. Copy these from `panna_verse/src` into
