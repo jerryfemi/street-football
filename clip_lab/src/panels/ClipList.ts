@@ -1,3 +1,4 @@
+import { Tag } from '../state/project';
 import { store } from '../state/store';
 
 export class ClipList {
@@ -5,7 +6,7 @@ export class ClipList {
   private readonly searchInput: HTMLInputElement;
   private readonly listContainer: HTMLElement;
   private searchQuery = '';
-  private activeTag: string | null = null;
+  private activeTag: Tag | null = null;
 
   constructor(
     parent: HTMLElement,
@@ -67,7 +68,7 @@ export class ClipList {
 
     const filtered = project.clips.filter((c) => {
       const matchSearch = c.name.toLowerCase().includes(this.searchQuery);
-      const matchTag = !this.activeTag || c.tags.includes(this.activeTag as any);
+      const matchTag = !this.activeTag || c.tags.includes(this.activeTag);
       return matchSearch && matchTag;
     });
 
