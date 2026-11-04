@@ -3,8 +3,14 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "types": ["vite/client"],
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "types": [
+      "vite/client"
+    ],
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
@@ -13,6 +19,12 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src"],
-  "exclude": ["clip_lab", "dist", "node_modules"]
+  "include": [
+    "src"
+  ],
+  "exclude": [
+    "clip_lab",
+    "dist",
+    "node_modules"
+  ]
 }
