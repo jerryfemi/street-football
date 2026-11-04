@@ -1,4 +1,5 @@
-import { Group, Mesh, MeshBasicMaterial, RingGeometry, Vector3, type Object3D, type Scene } from 'three';
+import { Group, Mesh, MeshBasicMaterial, Quaternion, RingGeometry, Vector3, type Object3D, type Scene } from 'three';
+import { buildColliders, type Capsule } from '../physics/BodyColliders';
 import { BLOCK, GOAL, PITCH, PLAYER, SHOT, SLIDE, TACKLE } from '../config';
 import type { PlayerIntent } from '../controllers/types';
 import { angleDelta, clamp, forwardFromYaw, localToWorld, samplePath, yawFromDir } from '../core/math';
@@ -10,6 +11,7 @@ export type Role = 'attacker' | 'defender';
 export type PlayerState = 'free' | 'skill' | 'shoot' | 'tackle' | 'stumble' | 'celebrate' | 'receive' | 'block';
 
 const _v = new Vector3();
+const _q = new Quaternion();
 const _p = { x: 0, z: 0 };
 
 /**
@@ -42,6 +44,13 @@ export class Player {
 
   readonly animator: Animator;
   private readonly body: Object3D;
+  /** capsules on the animated bones (empty for placeholder bodies) */
+  readonly colliders: Capsule[];
+  private collidersPrimed = false;
+  /** how long the current stumble/stagger lasts */
+  private stumbleFor: number = TACKLE.stumbleTime;
+  /** procedural hit springs layered on top of the animation */
+  private readonly springs: { bone: Object3D; axis: Vector3; angle: number; vel: number }[] = [];
   private readonly isPlaceholder: boolean;
   private stridePhase = 0;
   /** [left, right] toe/foot bones of the real model (empty for placeholders) */
@@ -92,6 +101,7 @@ export class Player {
     }
     if (this.feet.length !== 2) this.feet.length = 0;
 
+    this.colliders = isPlaceholder ? [] : buildColliders(body);
     this.contacts = asset.dribbleContacts;
     this.skillSpots = asset.skillSpots;
     this.pos = this.root.position;
@@ -131,6 +141,62 @@ export class Player {
       this.footPos[i].copy(_v);
     }
     this.feetPrimed = true;
+    for (const c of this.colliders) {
+      c.pa.copy(c.a);
+      c.pb.copy(c.b);
+      c.a.setFromMatrixPosition(c.boneA.matrixWorld);
+      c.b.setFromMatrixPosition(c.boneB.matrixWorld);
+      if (!this.collidersPrimed) {
+        c.pa.copy(c.a);
+        c.pb.copy(c.b);
+      }
+    }
+    this.collidersPrimed = true;
+  }
+
+  /**
+   * Knock the player off balance: pushed along (dx, dz), for longer the harder the hit.
+   * `anim` picks the reaction clip (stumble forward, stumble back, fall).
+   */
+  stagger(dx: number, dz: number, strength: number, anim = 'stumble'): void {
+    const l = Math.hypot(dx, dz) || 1;
+    const k = Math.min(1, Math.max(0, strength));
+    this.setState('stumble');
+    this.skill = null;
+    this.stumbleFor = 0.25 + 0.75 * k;
+    this.vel.set((dx / l) * (1 + 3 * k), 0, (dz / l) * (1 + 3 * k));
+    this.animator.play(anim, { once: true, duration: this.stumbleFor + 0.1, fade: 0.08 });
+  }
+
+  /**
+   * Procedural hit: rotate a bone away from the impact and let it spring back, layered over
+   * whatever clip is playing - so every contact looks a little different.
+   */
+  hitReact(bone: Object3D, dirX: number, dirZ: number, strength: number): void {
+    // axis perpendicular to the push, in the bone's parent space
+    _v.set(dirZ, 0, -dirX).normalize();
+    bone.parent?.getWorldQuaternion(_q).invert();
+    if (bone.parent) _v.applyQuaternion(_q);
+    const existing = this.springs.find((s) => s.bone === bone);
+    const kick = Math.min(1, strength) * 9;
+    if (existing) {
+      existing.axis.copy(_v);
+      existing.vel += kick;
+    } else this.springs.push({ bone, axis: _v.clone(), angle: 0, vel: kick });
+  }
+
+  private applySprings(dt: number): void {
+    for (let i = this.springs.length - 1; i >= 0; i--) {
+      const s = this.springs[i];
+      s.vel += (-160 * s.angle - 14 * s.vel) * dt;
+      s.angle += s.vel * dt;
+      if (Math.abs(s.angle) < 1e-3 && Math.abs(s.vel) < 1e-2) {
+        this.springs.splice(i, 1);
+        continue;
+      }
+      _q.setFromAxisAngle(s.axis, s.angle);
+      s.bone.quaternion.premultiply(_q);
+    }
   }
 
   get hasFeet(): boolean {
@@ -204,6 +270,7 @@ export class Player {
 
   stumble(): void {
     this.setState('stumble');
+    this.stumbleFor = TACKLE.stumbleTime;
     this.animator.play('stumble', { once: true, duration: TACKLE.stumbleTime, fade: 0.1 });
   }
 
@@ -252,7 +319,7 @@ export class Player {
       }
       case 'stumble':
         this.brake(dt, 6);
-        if (this.stateTime >= TACKLE.stumbleTime) this.setState('free');
+        if (this.stateTime >= this.stumbleFor) this.setState('free');
         break;
       case 'celebrate':
         this.brake(dt, 4);
@@ -369,6 +436,7 @@ export class Player {
       else if (name === 'idle' && this.animator.playingClip === 'idle_soccer') this.animator.setSpeedScale(0.55);
     }
     this.animator.update(dt);
+    if (this.springs.length) this.applySprings(dt);
     if (this.isPlaceholder) this.animatePlaceholder(dt);
   }
 

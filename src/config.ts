@@ -129,6 +129,37 @@ export const BLOCK = {
   extraRadius: 0.35,
 } as const;
 
+/** Body contact (Match contact layer). */
+export const CONTACT = {
+  /** a tackling foot this close to the attacker's shin/foot, before the ball, is a trip (m) */
+  tripReach: 0.1,
+  /** closing speed (m/s) at which two bodies meeting becomes an impact, not just a nudge */
+  bumpSpeed: 3.2,
+  /** ball speed that knocks a player back when it hits the torso/head */
+  staggerBallSpeed: 13,
+  /** feet must be at least this far apart for the ball to fit between them (m) */
+  minNutmegGap: 0.3,
+  /** seconds after a nutmeg in which collecting the ball = panna (round win) */
+  pannaWindow: 3,
+  /** a loose ball faster than this can't be collected - it hits you (m/s) */
+  controlSpeed: 6.5,
+  /** a foot this close to a loose ball can trap it (m) */
+  footPickup: 0.3,
+  /** reaction time before a foot can trap a moving ball (s) */
+  reactAttacker: 0.03,
+  reactDefender: 0.14,
+} as const;
+
+/** Bounciness of the ball off each body part (planted feet override to ~0.1). */
+export const RESTITUTION = {
+  foot: 0.45,
+  shin: 0.5,
+  thigh: 0.35,
+  torso: 0.15,
+  chest: 0.2,
+  head: 0.55,
+} as const;
+
 export const ROUND = {
   /** seconds the attacker has to score once the ball is live */
   shotClock: 12,
