@@ -24,6 +24,7 @@ const _ray = new Raycaster();
 const _pointer = new Vector2();
 const _groundPlane = new Plane(new Vector3(0, 1, 0), 0);
 const _intersect = new Vector3();
+const ZERO_ROOT = { x: 0, z: 0 };
 
 export class Overlays {
   readonly group = new Group();
@@ -67,14 +68,20 @@ export class Overlays {
     this.pathGeo.setFromPoints(points);
   }
 
+  /** Root (hips ground point, local axes) at a trimmed time: touch at/to are relative to it. */
+  rootAt: (t: number) => { x: number; z: number } = () => ZERO_ROOT;
+
   updateTouchGizmos(touches: Touch[], selectedTouchId: string | null): void {
-    // Clear old gizmo meshes
+    // Clear old gizmo meshes (and free their GPU buffers)
     while (this.gizmoGroup.children.length > 0) {
-      const child = this.gizmoGroup.children[0];
+      const child = this.gizmoGroup.children[0] as Mesh;
       this.gizmoGroup.remove(child);
+      child.geometry?.dispose();
+      (child.material as MeshBasicMaterial | undefined)?.dispose();
     }
 
     for (const touch of touches) {
+      const root = this.rootAt(touch.t);
       const isSelected = touch.id === selectedTouchId;
       const footColor = touch.foot === 'L' ? 0x38bdf8 : 0xf59e0b;
       const color = isSelected ? 0x00ffcc : footColor;
@@ -90,14 +97,14 @@ export class Overlays {
       });
       const ringMesh = new Mesh(ringGeo, ringMat);
       // world.x = -localX, world.z = localZ
-      ringMesh.position.set(-touch.at.x, 0.01, touch.at.z);
+      ringMesh.position.set(-(touch.at.x + root.x), 0.01, touch.at.z + root.z);
       ringMesh.userData = { touchId: touch.id, target: 'at' };
       this.gizmoGroup.add(ringMesh);
 
       // Arrow pointing to 'to'
       if (touch.to) {
-        const atWorld = new Vector3(-touch.at.x, 0.015, touch.at.z);
-        const toWorld = new Vector3(-touch.to.x, 0.015, touch.to.z);
+        const atWorld = new Vector3(-(touch.at.x + root.x), 0.015, touch.at.z + root.z);
+        const toWorld = new Vector3(-(touch.to.x + root.x), 0.015, touch.to.z + root.z);
         const dir = _v1.subVectors(toWorld, atWorld);
         const dist = dir.length();
 
@@ -166,8 +173,9 @@ export class Overlays {
         if (!touch) return;
 
         // world.x = -localX, world.z = localZ
-        const newLocalX = Number((- _intersect.x).toFixed(3));
-        const newLocalZ = Number((_intersect.z).toFixed(3));
+        const root = this.rootAt(touch.t);
+        const newLocalX = Number((-_intersect.x - root.x).toFixed(3));
+        const newLocalZ = Number((_intersect.z - root.z).toFixed(3));
 
         if (this.dragTarget === 'at') {
           touch.at.x = newLocalX;
