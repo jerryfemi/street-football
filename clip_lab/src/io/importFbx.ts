@@ -70,7 +70,7 @@ export async function importCharacterFile(file: File): Promise<LoadedRig> {
  */
 export async function importClipFile(
   file: File,
-): Promise<{ entry: ClipEntry; raw: AnimationClip; isRokoko: boolean }> {
+): Promise<{ entry: ClipEntry; raw: AnimationClip; isRokoko: boolean; root: Object3D }> {
   const buffer = await file.arrayBuffer();
   await saveFileBuffer(file.name, buffer);
 
@@ -84,5 +84,5 @@ export async function importClipFile(
   const existing = store.getState().project.clips.find((c) => c.id === name);
   const entry = existing ?? createClipEntry(name, file.name, raw.duration, isRokoko);
   if (!existing) store.addClip(entry);
-  return { entry, raw, isRokoko };
+  return { entry, raw, isRokoko, root: obj };
 }
