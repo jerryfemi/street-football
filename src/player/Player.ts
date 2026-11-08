@@ -6,6 +6,7 @@ import { angleDelta, clamp, forwardFromYaw, localToWorld, samplePath, yawFromDir
 import type { SkillDef } from '../skills/skills';
 import { Animator } from './Animator';
 import { instantiateBody, type CharacterAsset } from './assets';
+import { sampleMotion, type Motion } from './motion';
 
 export type Role = 'attacker' | 'defender';
 export type PlayerState = 'free' | 'skill' | 'shoot' | 'tackle' | 'stumble' | 'celebrate' | 'receive' | 'block';
@@ -13,6 +14,7 @@ export type PlayerState = 'free' | 'skill' | 'shoot' | 'tackle' | 'stumble' | 'c
 const _v = new Vector3();
 const _q = new Quaternion();
 const _p = { x: 0, z: 0 };
+const _m = { x: 0, z: 0, yaw: 0 };
 
 /**
  * One footballer: movement, facing, action state, animation choice.
@@ -63,11 +65,19 @@ export class Player {
   autoChase = 0;
   /** last local forward offset of each foot (dribble beat detection) */
   readonly prevFootZ = [0, 0];
+  /** last forward step of each foot (dribble strike = end of the forward swing) */
+  readonly prevFootDz = [0, 0];
   /** >0 while a sharp-touch cut animation plays over normal locomotion */
   cutTimer = 0;
   /** dribble touch timing read from the animation (shared, from the asset) */
   readonly contacts: CharacterAsset['dribbleContacts'];
   readonly skillSpots: CharacterAsset['skillSpots'];
+  /** measured root motion of the move being played (null = hand-authored playerPath) */
+  skillMotion: Motion | null = null;
+  /** length of the current skill (the clip's own length for measured moves) */
+  skillDuration = 1;
+  private readonly motions: CharacterAsset['motions'];
+  private readonly refSpeed: CharacterAsset['refSpeed'];
 
   constructor(
     scene: Scene,
@@ -104,6 +114,8 @@ export class Player {
     this.colliders = isPlaceholder ? [] : buildColliders(body);
     this.contacts = asset.dribbleContacts;
     this.skillSpots = asset.skillSpots;
+    this.motions = asset.motions;
+    this.refSpeed = asset.refSpeed;
     this.pos = this.root.position;
     this.animator = new Animator(body, asset.clips);
     scene.add(this.root);
@@ -115,7 +127,7 @@ export class Player {
 
   /** Normalised progress through the current skill (0..1). */
   get skillT(): number {
-    return this.skill ? clamp(this.stateTime / this.skill.duration, 0, 1) : 0;
+    return this.skill ? clamp(this.stateTime / this.skillDuration, 0, 1) : 0;
   }
 
   get isProtected(): boolean {
@@ -234,9 +246,17 @@ export class Player {
     this.skillOrigin.copy(this.pos);
     this.skillYaw = this.yaw;
     this.skillReleased = false;
+    // the clip that actually plays: "_R" moves have a real "_L" twin, others a generated "_m" mirror
+    // clips authored going LEFT: the plain clip is the left version
+    if (def.clipSide === -1) mirror = !mirror;
+    this.skillMirror = mirror;
+    let anim = def.anim;
+    if (mirror) anim = /_R$/.test(anim) ? anim.replace(/_R$/, '_L') : `${anim}_m`;
+    if (!this.animator.has(anim) || (mirror && !this.animator.hasExact(anim))) anim = def.anim;
+    this.skillMotion = def.measured ? this.motions.get(anim) ?? null : null;
+    this.skillDuration = this.skillMotion ? this.skillMotion.duration : def.duration;
     this.setState('skill');
-    this.animator.play(def.anim, { once: true, duration: def.duration, fade: 0.1 });
-    // Mirroring the animation itself needs a mirrored clip (see docs/ANIMATION_PIPELINE.md).
+    this.animator.play(anim, { once: true, duration: this.skillDuration, fade: 0.08 });
   }
 
   startShoot(power: number, aimX: number): void {
@@ -293,7 +313,7 @@ export class Player {
         break;
       case 'skill':
         this.followSkillPath(dt);
-        if (this.skill && this.stateTime >= this.skill.duration) {
+        if (this.skill && this.stateTime >= this.skillDuration) {
           // carry some momentum out of the move
           forwardFromYaw(this.yaw, this.vel).multiplyScalar(PLAYER.runSpeed * 0.6);
           this.skill = null;
@@ -373,6 +393,18 @@ export class Player {
   private followSkillPath(dt: number): void {
     const def = this.skill!;
     const t = this.skillT;
+    if (this.skillMotion) {
+      // replay the clip's own root path + turn: the feet stay where the animation plants them
+      sampleMotion(this.skillMotion, Math.min(this.stateTime, this.skillDuration), _m);
+      const prevX = this.pos.x;
+      const prevZ = this.pos.z;
+      localToWorld(this.skillOrigin, this.skillYaw, _m.x, _m.z, _v);
+      this.pos.x = _v.x;
+      this.pos.z = _v.z;
+      this.yaw = this.skillYaw + _m.yaw;
+      this.vel.set(this.pos.x - prevX, 0, this.pos.z - prevZ).multiplyScalar(1 / Math.max(dt, 1e-4));
+      return;
+    }
     samplePath(def.playerPath, t, _p);
     const x = this.skillMirror ? -_p.x : _p.x;
     const prevX = this.pos.x;
@@ -411,29 +443,26 @@ export class Player {
     if (this.state === 'free' && this.cutTimer <= 0) {
       const s = this.speed;
       let name: string;
-      let ref: number;
       if (s < 0.4) {
         name = jockey ? 'defend_stance' : 'idle';
-        ref = 0;
       } else if (jockey) {
-        name = 'jockey';
-        ref = 2.5;
+        // pick the shuffle from the direction he's moving relative to where he faces
+        const fx = Math.sin(this.yaw);
+        const fz = Math.cos(this.yaw);
+        const fwd = this.vel.x * fx + this.vel.z * fz;
+        const right = -this.vel.x * fz + this.vel.z * fx;
+        if (Math.abs(right) > Math.abs(fwd)) name = right > 0 ? 'jockey_R' : 'jockey_L';
+        else name = fwd < 0 ? 'jockey_back' : 'defend_stance';
       } else if (this.hasBall) {
-        name = 'dribble';
-        ref = PLAYER.runSpeed * PLAYER.dribbleSpeedFactor;
-      } else if (s < 1.8) {
-        name = 'walk';
-        ref = 1.4;
-      } else if (s > PLAYER.runSpeed * 1.1) {
-        name = 'sprint';
-        ref = PLAYER.sprintSpeed;
+        name = s > PLAYER.runSpeed * 0.92 ? 'dribble_sprint' : 'dribble';
       } else {
-        name = 'run';
-        ref = PLAYER.runSpeed;
+        name = s > PLAYER.runSpeed * 0.92 ? 'sprint' : 'run';
       }
       this.animator.play(name);
-      if (ref > 0) this.animator.setSpeedScale(clamp(s / ref, 0.45, 1.4));
-      else if (name === 'idle' && this.animator.playingClip === 'idle_soccer') this.animator.setSpeedScale(0.55);
+      // play locomotion at the clip's own ground speed -> no foot sliding
+      const ref = this.refSpeed.get(this.animator.playingClip) ?? 0;
+      if (ref > 0.3) this.animator.setSpeedScale(clamp(s / ref, 0.5, 1.6));
+      else this.animator.setSpeedScale(1);
     }
     this.animator.update(dt);
     if (this.springs.length) this.applySprings(dt);
