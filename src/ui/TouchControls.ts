@@ -5,8 +5,9 @@ import type { Input } from '../core/Input';
  * and the keyboard keeps working alongside - everything feeds the same Input.
  *
  *   left  : virtual joystick (drag)          → move / dribble
- *   right : SKILL pad (drag/flick a direction) → same gestures as the arrow keys
- *           SHOOT (hold, release)  DASH (hold = dash, tap = sharp touch)
+ *   right : FEINT pad (swipe a direction = feint command, same as Dash Dash + direction)
+ *           SHOOT (hold, release)  DASH (hold = dash, tap = sharp touch,
+ *           double tap + joystick direction = feint command)
  *   defending: TACKLE · SLIDE · BLOCK replace SHOOT/DASH/SKILL
  */
 export class TouchControls {
@@ -33,7 +34,7 @@ export class TouchControls {
     // ---- attack buttons
     this.attackSet = div('tc-set');
     const skill = div('tc-skill');
-    skill.innerHTML = '<span>SKILL</span><i class="u"></i><i class="r"></i><i class="d"></i><i class="l"></i>';
+    skill.innerHTML = '<span>FEINT</span><i class="u"></i><i class="r"></i><i class="d"></i><i class="l"></i>';
     this.bindSkillPad(skill);
     const shoot = this.button('SHOOT', 'tc-btn tc-shoot', 'Space');
     const dash = this.button('DASH', 'tc-btn tc-dash', 'ShiftLeft');
@@ -118,41 +119,31 @@ export class TouchControls {
     stick.addEventListener('pointercancel', end);
   }
 
-  /**
-   * Flick pad: each drag segment of ~36 px in a new direction emits one arrow "flick".
-   * So a single swipe right = stepover right; swipe left then right in one stroke = elastico;
-   * two quick swipes left = body feint; down then right = samba roll; up = knock-on.
-   */
+  /** Feint pad: one swipe = one feint command in that (screen) direction. */
   private bindSkillPad(pad: HTMLDivElement): void {
-    const STEP = 36;
+    const STEP = 30;
     let id = -1;
     let ox = 0;
     let oy = 0;
-    let last = '';
-    const codeFor = (dx: number, dy: number) =>
-      Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'ArrowRight' : 'ArrowLeft') : dy > 0 ? 'ArrowDown' : 'ArrowUp';
+    let fired = false;
     pad.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       id = e.pointerId;
       pad.setPointerCapture(id);
       ox = e.clientX;
       oy = e.clientY;
-      last = '';
+      fired = false;
       pad.classList.add('on');
     });
     pad.addEventListener('pointermove', (e) => {
-      if (e.pointerId !== id) return;
+      if (e.pointerId !== id || fired) return;
       const dx = e.clientX - ox;
       const dy = e.clientY - oy;
-      if (Math.hypot(dx, dy) < STEP) return;
-      const code = codeFor(dx, dy);
-      if (code !== last) {
-        this.input.tapVirtual(code);
-        flash(pad, code);
-        last = code;
-      }
-      ox = e.clientX;
-      oy = e.clientY;
+      const l = Math.hypot(dx, dy);
+      if (l < STEP) return;
+      fired = true;
+      this.input.feint(dx / l, -dy / l);
+      flash(pad, Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'ArrowRight' : 'ArrowLeft') : dy > 0 ? 'ArrowDown' : 'ArrowUp');
     });
     const end = (e: PointerEvent) => {
       if (e.pointerId !== id) return;
