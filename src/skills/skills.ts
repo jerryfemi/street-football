@@ -19,127 +19,102 @@ import type { Keyframe } from '../core/math';
 export interface SkillDef {
   id: string;
   anim: string;
+  /** seconds; for measured moves (`measured`) the clip's own length is used instead */
   duration: number;
+  /** hand-authored body path (ignored when the clip's measured root motion is available) */
   playerPath: readonly Keyframe[];
+  /**
+   * Use the clip's measured root motion (travel + turn) for the body. The mirrored move plays
+   * the generated `<anim>_m` clip with the path flipped.
+   */
+  measured?: boolean;
+  /** which side the clip itself goes (+1 right, -1 left): picks plain vs mirrored for a wanted side */
+  clipSide?: -1 | 1;
   /** where the ball is set at the start of the move (local) */
   set?: { x: number; z: number };
   /** let animated feet push the ball during the move */
   footPush: boolean;
-  /** the decisive touch */
-  take: { t: number; x: number; z: number; chase?: boolean; arriveIn?: number };
+  /**
+   * The decisive touch at `t` (0..1). x/z = local target. With `measured`, `toEnd` sends it to
+   * where the player will be when the move ends, `lead` metres in front of his final facing.
+   * `lift` = upward speed (m/s) for flicks over the defender.
+   */
+  take: { t: number; x: number; z: number; chase?: boolean; arriveIn?: number; toEnd?: boolean; lead?: number; lift?: number };
   /** which way it SELLS to the defender (-1 left, +1 right, 0 none) */
   fakeSide: -1 | 0 | 1;
   /** seconds a tackle can't win the ball */
   protectedFor: number;
 }
 
+/** Cuts/turns: measured clips, ball taken with him to where he ends up. Authored to the RIGHT. */
+function cut(id: string, anim: string, t: number): SkillDef {
+  return {
+    id,
+    anim,
+    duration: 0.8,
+    playerPath: [{ t: 0, x: 0, z: 0 }, { t: 1, x: 0.6, z: 0.8 }],
+    measured: true,
+    clipSide: 1,
+    footPush: false,
+    take: { t, x: 0.8, z: 1.0, toEnd: true, lead: 0.45 },
+    fakeSide: 0,
+    protectedFor: 0.3,
+  };
+}
+
 export const SKILLS: Record<string, SkillDef> = {
-  /** Stepover: leg circles over the ball selling LEFT, ball taken RIGHT. */
-  stepover: {
-    id: 'stepover',
-    anim: 'skill_stepover',
-    duration: 1.25,
-    playerPath: [
-      { t: 0, x: 0, z: 0 },
-      { t: 0.6, x: -0.1, z: 0.15 },
-      { t: 1, x: 0.8, z: 0.9 },
-    ],
-    set: { x: 0.0, z: 0.28 },
+  cut_45: cut('cut_45', 'cut_45_R', 0.3),
+  cut_90: cut('cut_90', 'cut_90_R', 0.3),
+
+  /** Drag back: sole pulls it back and he turns away with it (escape when pressed). */
+  drag_back: {
+    id: 'drag_back',
+    anim: 'skill_drag_back',
+    duration: 2.15,
+    playerPath: [{ t: 0, x: 0, z: 0 }, { t: 1, x: 0, z: -0.5 }],
+    measured: true,
+    clipSide: -1,
+    set: { x: 0, z: 0.3 },
     footPush: true,
-    take: { t: 0.68, x: 1.15, z: 1.5 },
-    fakeSide: -1,
-    protectedFor: 0.75,
-  },
-
-  /** Body feint: hips dip left, no touch, then the ball is pushed right. */
-  bodyfeint: {
-    id: 'bodyfeint',
-    anim: 'skill_bodyfeint',
-    duration: 1.2,
-    playerPath: [
-      { t: 0, x: 0, z: 0 },
-      { t: 0.4, x: -0.3, z: 0.1 },
-      { t: 1, x: 0.8, z: 0.9 },
-    ],
-    set: { x: 0, z: 0.32 },
-    footPush: false,
-    take: { t: 0.62, x: 1.1, z: 1.5 },
-    fakeSide: -1,
-    protectedFor: 0.55,
-  },
-
-  /** Elastico: outside of the left foot pushes it out, then snaps it back across to the right. */
-  elastico: {
-    id: 'elastico',
-    anim: 'skill_elastico',
-    duration: 1.15,
-    playerPath: [
-      { t: 0, x: 0, z: 0 },
-      { t: 0.35, x: -0.15, z: 0.1 },
-      { t: 1, x: 0.85, z: 0.85 },
-    ],
-    set: { x: -0.25, z: 0.2 },
-    footPush: true,
-    take: { t: 0.5, x: 1.1, z: 1.4 },
-    fakeSide: -1,
-    protectedFor: 0.8,
-  },
-
-  /** Samba roll: sole rolls it across the body, player spins away to the left. */
-  samba_roll: {
-    id: 'samba_roll',
-    anim: 'skill_samba_roll',
-    duration: 1.5,
-    playerPath: [
-      { t: 0, x: 0, z: 0 },
-      { t: 0.5, x: -0.4, z: 0.05 },
-      { t: 1, x: -1.0, z: 0.5 },
-    ],
-    set: { x: 0, z: 0.22 },
-    footPush: true,
-    take: { t: 0.55, x: -1.25, z: 1.0 },
-    fakeSide: 1,
-    protectedFor: 1.0,
-  },
-
-  /** Drop of the shoulder: short dip left, then a big touch right and away. */
-  drop_shoulder: {
-    id: 'drop_shoulder',
-    anim: 'skill_drop_shoulder',
-    duration: 0.95,
-    playerPath: [
-      { t: 0, x: 0, z: 0 },
-      { t: 0.45, x: -0.25, z: 0.15 },
-      { t: 1, x: 0.8, z: 1.1 },
-    ],
-    set: { x: 0, z: 0.38 },
-    footPush: false,
-    take: { t: 0.55, x: 1.6, z: 2.6, chase: true, arriveIn: 0.7 },
-    fakeSide: -1,
-    protectedFor: 0.5,
-  },
-
-  /** Drag stepover: sole drags it back, step over, out to the right. Escape when pressed. */
-  drag_stepover: {
-    id: 'drag_stepover',
-    anim: 'skill_stepover_drag',
-    duration: 1.5,
-    playerPath: [
-      { t: 0, x: 0, z: 0 },
-      { t: 0.4, x: 0, z: -0.3 },
-      { t: 1, x: 0.9, z: 0.3 },
-    ],
-    set: { x: 0.05, z: 0.15 },
-    footPush: true,
-    take: { t: 0.72, x: 1.3, z: 0.7 },
-    fakeSide: -1,
+    take: { t: 0.4, x: 0, z: -1, toEnd: true, lead: 0.45 },
+    fakeSide: 0,
     protectedFor: 0.9,
   },
 
-  /** Knock-on: push it past him diagonally and the player sprints onto it automatically. */
+  /** Roulette: 360° spin over the ball, rolling it across his body away from the defender. */
+  roulette: {
+    id: 'roulette',
+    anim: 'skill_roulette',
+    duration: 1.27,
+    playerPath: [{ t: 0, x: 0, z: 0 }, { t: 1, x: 0.6, z: 1.2 }],
+    measured: true,
+    clipSide: -1,
+    set: { x: 0, z: 0.3 },
+    footPush: true,
+    take: { t: 0.62, x: 0.6, z: 1.6, toEnd: true, lead: 0.45 },
+    fakeSide: -1,
+    protectedFor: 0.95,
+  },
+
+  /** Rainbow flick: heel flicks it up over his head and over the defender; he chases it. */
+  rainbow: {
+    id: 'rainbow',
+    anim: 'skill_rainbow',
+    duration: 1.32,
+    playerPath: [{ t: 0, x: 0, z: 0 }, { t: 1, x: 0, z: 0.3 }],
+    measured: true,
+    clipSide: 1,
+    set: { x: 0, z: 0.15 },
+    footPush: false,
+    take: { t: 0.72, x: 0, z: 3.4, chase: true, arriveIn: 0.95, lift: 4.6 },
+    fakeSide: 0,
+    protectedFor: 1.0,
+  },
+
+  /** Knock-on: push it past him and sprint onto it automatically. */
   knockon: {
     id: 'knockon',
-    anim: 'skill_knockon',
+    anim: 'dribble_sprint',
     duration: 0.3,
     playerPath: [
       { t: 0, x: 0, z: 0 },
