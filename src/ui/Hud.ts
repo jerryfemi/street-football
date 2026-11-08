@@ -1,3 +1,4 @@
+import { FREE_PLAY } from '../config';
 /**
  * DOM overlay: score, shot clock, big round messages, shot power meter, controls, loading.
  * Plain DOM on purpose - cheap, crisp text, and easy to restyle in style.css.
@@ -18,6 +19,7 @@ export class Hud {
 
     const top = el('div', 'hud-top');
     this.scoreEl = el('div', 'hud-score');
+    if (FREE_PLAY) this.scoreEl.style.display = 'none';
     this.clockEl = el('div', 'hud-clock');
     top.append(this.scoreEl, this.clockEl);
 
@@ -28,7 +30,7 @@ export class Hud {
 
     const help = el('div', 'hud-help');
     help.innerHTML =
-      '<b>WASD</b> dribble · <b>Shift</b> hold dash / tap sharp touch · <b>Space</b> shoot · <b>Arrows</b> skills: ←/→ stepover · ↑ knock-on · ↓ drag · ←← feint · ←→ elastico · ↓→ samba';
+      '<b>WASD / arrows</b> move · <b>Shift</b> hold dash · tap: sharp touch · <b>Shift Shift + direction</b> feint (↑ knock-on/rainbow · ↗ 45° cut · → 90° cut · ↘ roulette · ↓ drag back) · <b>Space</b> shoot';
 
     this.loadingEl = el('div', 'hud-loading');
     this.loadingEl.textContent = 'Loading…';
@@ -52,6 +54,7 @@ export class Hud {
   }
 
   message(text: string, tone: 'info' | 'good' | 'bad'): void {
+    if (FREE_PLAY) return;
     this.msgEl.textContent = text;
     this.msgEl.className = `hud-msg show ${tone}`;
     this.msgTimer = 1.4;
