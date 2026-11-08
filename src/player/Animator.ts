@@ -43,6 +43,11 @@ export class Animator {
     return this.currentName;
   }
 
+  /** true only if this exact clip exists (no fallback) */
+  hasExact(name: string): boolean {
+    return this.actions.has(name);
+  }
+
   has(name: string): boolean {
     return this.resolve(name) !== null;
   }
