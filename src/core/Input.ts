@@ -42,6 +42,15 @@ export class Input {
     }
   }
 
+  /** Feint command from the on-screen pad: screen direction (x = right, y = up). */
+  feintX = 0;
+  feintY = 0;
+  feint(x: number, y: number): void {
+    this.feintX = x;
+    this.feintY = y;
+    this.tapVirtual('Feint');
+  }
+
   /** Tap a key for one simulation step (on-screen flicks). */
   tapVirtual(code: string): void {
     this.pressed.add(code);
@@ -66,12 +75,12 @@ export class Input {
   /** Raw stick: x = right, y = forward (screen-up). Not normalised. */
   axisX(): number {
     if (Math.abs(this.stickX) > 0.15 || Math.abs(this.stickY) > 0.15) return this.stickX;
-    return (this.isDown('KeyD') ? 1 : 0) - (this.isDown('KeyA') ? 1 : 0);
+    return (this.isDown('KeyD', 'ArrowRight') ? 1 : 0) - (this.isDown('KeyA', 'ArrowLeft') ? 1 : 0);
   }
 
   axisY(): number {
     if (Math.abs(this.stickX) > 0.15 || Math.abs(this.stickY) > 0.15) return this.stickY;
-    return (this.isDown('KeyW') ? 1 : 0) - (this.isDown('KeyS') ? 1 : 0);
+    return (this.isDown('KeyW', 'ArrowUp') ? 1 : 0) - (this.isDown('KeyS', 'ArrowDown') ? 1 : 0);
   }
 
   endFrame(): void {
