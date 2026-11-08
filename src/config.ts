@@ -22,6 +22,12 @@ export const GOAL = {
   z: -PITCH.length / 2,
 } as const;
 
+/**
+ * Test mode: no check-ball, no score, no DEFENDED/foul round ends, scoreboard hidden.
+ * Tackles, blocks and goals still happen; a goal just hands the ball back. Set false for matches.
+ */
+export const FREE_PLAY = true;
+
 export const PLAYER = {
   height: 1.8,
   radius: 0.35,
@@ -52,6 +58,8 @@ export const BALL = {
 export const DRIBBLE = {
   /** turf drag on a dribbled ball (fraction of speed lost per second) */
   friction: 2.6,
+  /** a dribble strike is a foot's forward swing peaking at least this far in front (m) */
+  peakMinZ: 0.14,
   /** drag while a skill is being performed (ball sits more) */
   skillFriction: 5,
   /** drag when standing on the ball */
@@ -206,74 +214,58 @@ export const ASSETS = {
    * Rename freely, but keep the keys - code plays animations by these keys.
    */
   anims: {
-    /** calm standing idle - get Mixamo "Breathing Idle" and save as idle_calm.fbx */
+    /**
+     * Calm idle exported from Mixamo ON THIS CHARACTER. Also the rest-pose reference every other
+     * clip is retargeted onto (player/retarget.ts) - keep it first and keep it.
+     */
     idle: 'anims/idle_calm.fbx',
-    /** Mixamo "Soccer Idle" (bouncy ready stance) - used until idle_calm exists */
-    idle_soccer: 'anims/idle.fbx',
-    /** Mixamo "Walking" (In Place) */
-    walk: 'anims/walk.fbx',
-    /** sharp-touch cut (Dash tap + direction) */
-    cut: 'anims/rokoko/bodyfeint_running.fbx',
-    run: 'anims/run.fbx',
-    sprint: 'anims/sprint.fbx',
-    dribble: 'anims/dribble.fbx',
-    receive: 'anims/receive.fbx',
-    // Rokoko video-mocap (anims/rokoko/*): retargeted on load (rotations only, hips height rescaled)
-    skill_stepover: 'anims/rokoko/stepover_stationary.fbx',
-    skill_stepover_side: 'anims/rokoko/stepover_side.fbx',
-    skill_stepover_drag: 'anims/rokoko/stepover_drag.fbx',
-    skill_stepover_moving: 'anims/rokoko/stepover_moving.fbx',
-    skill_samba_roll: 'anims/rokoko/samba_roll.fbx',
-    skill_samba_a: 'anims/rokoko/samba_variant_a.fbx',
-    skill_samba_b: 'anims/rokoko/samba_variant_b.fbx',
-    skill_elastico: 'anims/rokoko/elastico.fbx',
-    skill_bodyfeint: 'anims/rokoko/bodyfeint_classic.fbx',
-    skill_bodyfeint_run: 'anims/rokoko/bodyfeint_running.fbx',
-    skill_drop_shoulder: 'anims/rokoko/drop_shoulder.fbx',
-    block: 'anims/rokoko/defender_block.fbx',
-    slide_tackle: 'anims/rokoko/slide_tackle.fbx',
-    defend_stance: 'anims/rokoko/defender_stance.fbx',
-    skill_knockon: 'anims/skill_knockon.fbx',
-    shoot: 'anims/shoot.fbx',
-    pass: 'anims/pass.fbx',
-    jockey: 'anims/jockey.fbx',
-    tackle: 'anims/tackle.fbx',
-    stumble: 'anims/stumble.fbx',
-    celebrate: 'anims/celebrate.fbx',
-    // extras downloaded 2026-10-29 (not wired to controls yet)
-    skill_spin: 'anims/skill_spin.fbx',
-    scissor_kick: 'anims/scissor_kick.fbx',
-    trick_stall: 'anims/trick_stall.fbx', // right foot
-    trick_knee: 'anims/trick_knee.fbx', // right foot
-    trick_stall_left: 'anims/trick_stall_left.fbx',
-    trick_knee_left: 'anims/trick_knee_left.fbx',
-    stumble_back: 'anims/stumble_back.fbx',
+    // ---- 2026-11 mocap set (anims/v2) ----
+    idle_ball: 'anims/v2/idle_with_ball.fbx',
+    run: 'anims/v2/dribble_jog_loop.fbx',
+    sprint: 'anims/v2/dribble_sprint_loop.fbx',
+    dribble: 'anims/v2/dribble_jog_loop.fbx',
+    dribble_sprint: 'anims/v2/dribble_sprint_loop.fbx',
+    receive: 'anims/v2/receive_trap.fbx',
+    // sharp touches / cuts (yaw is stripped on load; the game turns the body)
+    cut_45_L: 'anims/v2/turn_45_L.fbx',
+    cut_45_R: 'anims/v2/turn_45_R.fbx',
+    cut_90_L: 'anims/v2/turn_90_L.fbx',
+    cut_90_R: 'anims/v2/turn_90_R.fbx',
+    // feints (mirrored "_m" versions are generated on load, see ANIM_MIRROR)
+    skill_drag_back: 'anims/v2/turn_180_drag.fbx',
+    skill_roulette: 'anims/v2/roulette.fbx',
+    skill_rainbow: 'anims/v2/rainbow_flick.fbx',
+    // shooting / passing
+    shoot: 'anims/v2/shot_running.fbx',
+    shoot_standing: 'anims/v2/shot_standing_mixamo.fbx',
+    shoot_chip: 'anims/v2/shot_chip.fbx',
+    pass: 'anims/v2/pass_short_mixamo.fbx',
+    // defending
+    defend_stance: 'anims/v2/defend_stance_loop_mixamo.fbx',
+    jockey: 'anims/v2/jockey_back.fbx',
+    jockey_L: 'anims/v2/jockey_L.fbx',
+    jockey_R: 'anims/v2/jockey_R.fbx',
+    jockey_back: 'anims/v2/jockey_back.fbx',
+    tackle: 'anims/v2/standing_tackle.fbx',
+    slide_tackle: 'anims/v2/slide_tackle.fbx',
+    beaten_turn: 'anims/v2/beaten_turn.fbx',
+    // reactions
+    stumble: 'anims/v2/stumble_tackled.fbx',
+    frustrated: 'anims/v2/frustrated.fbx',
+    // extras, not wired to controls yet
+    header: 'anims/v2/bonus_header.fbx',
+    scissor_kick: 'anims/v2/bonus_scissor_kick.fbx',
   } as Record<string, string>,
   /**
-   * Clips whose hips should NOT move the character horizontally
-   * (locomotion that wasn't downloaded "In Place").
+   * Locomotion loops: their hips travel is removed (the game moves the body).
+   * Clips in ANIM_MOTION keep nothing either - their travel and turn are measured and replayed.
    */
-  lockRootMotion: ['idle', 'idle_soccer', 'walk', 'run', 'sprint', 'dribble', 'jockey'] as string[],
+  lockRootMotion: ['idle', 'idle_ball', 'run', 'sprint', 'dribble', 'dribble_sprint', 'defend_stance', 'jockey', 'jockey_L', 'jockey_R', 'jockey_back', 'receive', 'frustrated'] as string[],
   /**
-   * Optional [start, end] seconds to cut from a clip (drops the T-pose first frames of Rokoko
-   * exports, or keeps one repetition of a drill that repeats the move).
+   * Optional [start, end] seconds to cut from a clip.
    */
   clipRanges: {
-    skill_stepover: [0.1, 1.97],
-    skill_stepover_side: [0.1, 2.27],
-    skill_stepover_drag: [0.1, 2.5],
-    skill_stepover_moving: [0.1, 2.07],
-    skill_samba_roll: [0.1, 2.13],
-    skill_samba_a: [0.1, 2.37],
-    skill_samba_b: [0.1, 2.83],
-    skill_elastico: [0.1, 2.0],
-    skill_bodyfeint: [0.1, 2.1],
-    skill_bodyfeint_run: [0.1, 1.7],
-    cut: [0.15, 0.9],
-    skill_drop_shoulder: [0.1, 1.47],
-    block: [0.1, 1.3],
-    slide_tackle: [0.1, 1.17],
-    defend_stance: [0.1, 1.27],
+    tackle: [0, 0.95],
   } as Record<string, [number, number]>,
   /**
    * Optional bone renames for clips that don't use Mixamo bone names
@@ -284,33 +276,46 @@ export const ASSETS = {
 } as const;
 
 /** Short mocap loops that pop when they wrap - play them forward/backward instead. */
-export const ANIM_PINGPONG: string[] = ['defend_stance'];
+export const ANIM_PINGPONG: string[] = [];
+
+/**
+ * One-shot moves whose root travel + turn are MEASURED from the clip on load and replayed by the
+ * game (Player follows the clip's own path), so feet never slide. The clip itself is played in place.
+ */
+export const ANIM_MOTION: string[] = [
+  'cut_45_L', 'cut_45_R', 'cut_90_L', 'cut_90_R',
+  'skill_drag_back', 'skill_roulette', 'skill_rainbow', 'beaten_turn',
+  'shoot', 'shoot_standing', 'shoot_chip', 'pass', 'tackle', 'slide_tackle', 'stumble',
+];
+
+/** Single-sided moves: a left/right mirrored copy is built on load as `<name>_m`. */
+export const ANIM_MIRROR: string[] = ['skill_drag_back', 'skill_roulette', 'skill_rainbow'];
 
 /** If a clip is missing, try these instead (in order). */
 export const ANIM_FALLBACKS: Record<string, string[]> = {
-  idle: ['idle_soccer'],
+  idle_ball: ['idle'],
   walk: ['run', 'dribble'],
-  cut: ['skill_bodyfeint_run', 'dribble'],
   run: ['dribble'],
   sprint: ['run', 'dribble'],
   dribble: ['run'],
-  receive: ['idle'],
-  skill_stepover: ['dribble', 'run'],
-  skill_elastico: ['skill_stepover', 'dribble'],
-  skill_bodyfeint: ['skill_stepover', 'dribble'],
-  skill_drop_shoulder: ['skill_bodyfeint', 'dribble'],
-  skill_samba_roll: ['skill_stepover', 'dribble'],
-  skill_stepover_drag: ['skill_stepover', 'dribble'],
-  block: ['defend_stance', 'idle'],
-  slide_tackle: ['tackle', 'run'],
-  defend_stance: ['jockey', 'idle'],
-  skill_knockon: ['sprint', 'run'],
-  shoot: ['pass', 'idle'],
+  dribble_sprint: ['sprint', 'dribble'],
+  receive: ['idle_ball', 'idle'],
+  skill_knockon: ['dribble_sprint', 'sprint'],
+  shoot: ['shoot_standing', 'pass', 'idle'],
+  shoot_standing: ['shoot', 'pass'],
+  shoot_chip: ['shoot'],
   pass: ['shoot', 'idle'],
-  jockey: ['run', 'idle'],
+  block: ['defend_stance', 'idle'],
+  defend_stance: ['jockey', 'idle'],
+  jockey: ['defend_stance', 'idle'],
+  jockey_L: ['jockey'],
+  jockey_R: ['jockey'],
+  jockey_back: ['jockey'],
+  slide_tackle: ['tackle', 'run'],
   tackle: ['run'],
   stumble: ['idle'],
   celebrate: ['idle'],
+  frustrated: ['idle'],
 };
 
 export const COLORS = {
