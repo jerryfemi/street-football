@@ -17,6 +17,7 @@ import { Overlays } from './scene/Overlays';
 import { getFileBuffer } from './io/db';
 import { importCharacterFile, importClipFile, isRokokoClip, parseFbx, prepareCharacter } from './io/importFbx';
 import { retargetRokoko } from './shared/assets';
+import { applyRetarget, buildRetarget } from './shared/retarget';
 import { sampleFootTracks, type ClipFootTracks } from './analysis/footTracks';
 import { detectTouches } from './analysis/detectTouches';
 import { detectPlanted } from './analysis/detectPlanted';
@@ -152,7 +153,8 @@ let characterScale = 1;
 const loadedClips = new Map<string, AnimationClip>();
 /** parsed source clip per source file, retargeted once (never mutated after) */
 const baseClips = new Map<string, AnimationClip>();
-const rawClips = new Map<string, { raw: AnimationClip; isRokoko: boolean }>();
+/** parsed source per file: its clip and its own skeleton (needed for rest-pose retargeting) */
+const rawClips = new Map<string, { raw: AnimationClip; isRokoko: boolean; root: Object3D }>();
 /** extracted root motion per entry id ([t, x, z, yaw], untrimmed clip time) */
 const rootSamplesMap = new Map<string, [number, number, number, number][]>();
 let templateHips = 0;
@@ -173,12 +175,32 @@ function idleReference(): AnimationClip | undefined {
   return undefined;
 }
 
-/** Retarget every source clip (Mixamo clips first so Rokoko clips get the idle reference). */
+/**
+ * The character's own Mixamo skeleton (from a non-Rokoko idle exported on it) is the rest-pose
+ * reference: clips authored on other characters are converted onto it, which fixes caved
+ * shoulders, bent wrists and turned feet. Falls back to the character file itself.
+ */
+function retargetReference(): { root: Object3D; file?: string; standY?: number } | undefined {
+  for (const e of store.getState().project.clips) {
+    if (!/^idle/i.test(e.id)) continue;
+    const r = rawClips.get(e.sourceFile);
+    if (r && !r.isRokoko) {
+      const hp = r.raw.tracks.find((t) => t.name === 'mixamorigHips.position');
+      return { root: r.root, file: e.sourceFile, standY: hp ? hp.values[1] : undefined };
+    }
+  }
+  if (characterTemplate) return { root: characterTemplate, standY: templateHips > 1e-3 ? templateHips : undefined };
+  return undefined;
+}
+
+/** Retarget every source clip onto the character (idle reference first, then rest-pose conversion). */
 function rebuildBases(): void {
   baseClips.clear();
   const ref = idleReference();
-  for (const [file, { raw, isRokoko }] of rawClips) {
+  const rt = retargetReference();
+  for (const [file, { raw, isRokoko, root }] of rawClips) {
     const c = raw.clone();
+    if (rt && file !== rt.file) applyRetarget(c, buildRetarget(root, rt.root), rt.standY);
     if (isRokoko) retargetRokoko(c, ref, true);
     baseClips.set(file, c);
   }
@@ -229,7 +251,7 @@ async function rebuildAll(): Promise<void> {
     if (!buf) continue;
     const obj = parseFbx(buf);
     const raw = obj.animations?.[0];
-    if (raw) rawClips.set(e.sourceFile, { raw, isRokoko: isRokokoClip(e.sourceFile, raw) });
+    if (raw) rawClips.set(e.sourceFile, { raw, isRokoko: isRokokoClip(e.sourceFile, raw), root: obj });
   }
   rebuildBases();
   loadedClips.clear();
@@ -367,8 +389,8 @@ const onDropFiles = async (files: FileList) => {
         characterChanged = true;
         showToast(`Loaded character: ${file.name}`, 'success');
       } else {
-        const { entry, raw, isRokoko } = await importClipFile(file);
-        rawClips.set(entry.sourceFile, { raw, isRokoko });
+        const { entry, raw, isRokoko, root } = await importClipFile(file);
+        rawClips.set(entry.sourceFile, { raw, isRokoko, root });
       }
     } catch (err) {
       console.error(err);
