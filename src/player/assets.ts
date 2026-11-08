@@ -1,3 +1,4 @@
+import { applyRetarget, buildRetarget } from './retarget';
 import {
   AnimationClip,
   AnimationMixer,
@@ -17,7 +18,8 @@ import {
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
-import { ASSETS } from '../config';
+import { ANIM_MIRROR, ANIM_MOTION, ASSETS } from '../config';
+import { extractMotion, mirrorClip, type Motion } from './motion';
 
 export interface CharacterAsset {
   /** Loaded model, or null if no character file was found (placeholder bodies are used). */
@@ -29,6 +31,10 @@ export interface CharacterAsset {
   dribbleContacts: DribbleContacts;
   /** per skill clip: where the lifted (circling) foot works around, local x/z - the stepover ball spot */
   skillSpots: Map<string, { x: number; z: number }>;
+  /** measured root travel/turn of one-shot moves (ANIM_MOTION), replayed by Player */
+  motions: Map<string, Motion>;
+  /** measured ground speed (m/s) of locomotion loops, for foot-locked playback speed */
+  refSpeed: Map<string, number>;
 }
 
 export interface DribbleContacts {
@@ -84,8 +90,13 @@ export async function loadCharacterAsset(onStatus: (msg: string) => void): Promi
     console.warn(`[assets] No character at public/${ASSETS.character} - using placeholder bodies.`, err);
   }
 
+  const refSpeed = new Map<string, number>();
+  const motions = new Map<string, Motion>();
   const entries = Object.entries(ASSETS.anims);
   let i = 0;
+  // Rest-pose reference: the first idle clip file exported from Mixamo on this character.
+  // Every other clip is converted onto its skeleton (fixes clips authored on other rigs).
+  let ref: { root: Object3D; standY?: number } | null = null;
   for (const [name, path] of entries) {
     i++;
     if (clips.has(name)) continue;
@@ -94,10 +105,32 @@ export async function loadCharacterAsset(onStatus: (msg: string) => void): Promi
       const res = await loadAny(path);
       const clip = res.animations[0];
       if (!clip) throw new Error('file has no animation');
+      if (!ref && !path.includes('/rokoko/') && /^idle/.test(name)) {
+        const hp = clip.tracks.find((t) => t.name === 'mixamorigHips.position');
+        ref = { root: res.scene, standY: hp ? hp.values[1] : undefined };
+      } else if (ref) {
+        applyRetarget(clip, buildRetarget(res.scene, ref.root), ref.standY);
+      }
       if (path.includes('/rokoko/')) retargetRokoko(clip, clips.get('idle') ?? clips.get('idle_soccer'));
+      if (template && ASSETS.lockRootMotion.includes(name)) refSpeed.set(name, measureSpeed(template, scale, clip));
       clips.set(name, prepareClip(clip, name));
     } catch {
       console.info(`[assets] animation "${name}" not found at public/${path} (fallback will be used)`);
+    }
+  }
+  // mirrored copies of single-sided moves, then measure + strip root motion of one-shot moves
+  for (const name of ANIM_MIRROR) {
+    const c = clips.get(name);
+    if (c) clips.set(`${name}_m`, mirrorClip(c, `${name}_m`));
+  }
+  if (template) {
+    for (const base of ANIM_MOTION) {
+      for (const name of [base, `${base}_m`]) {
+        const c = clips.get(name);
+        if (!c) continue;
+        const m = extractMotion(template, scale, c);
+        if (m) motions.set(name, m);
+      }
     }
   }
   console.info(`[assets] loaded clips: ${[...clips.keys()].join(', ') || '(none)'}`);
@@ -115,7 +148,7 @@ export async function loadCharacterAsset(onStatus: (msg: string) => void): Promi
     }
   }
   console.info('[assets] skill spots', Object.fromEntries(skillSpots));
-  return { template, scale, clips, dribbleContacts, skillSpots };
+  return { template, scale, clips, dribbleContacts, skillSpots, motions, refSpeed };
 }
 
 /**
@@ -193,6 +226,29 @@ function analyseContacts(template: Object3D, scale: number, clip: AnimationClip)
   if (hits.length === 0) return DEFAULT_CONTACTS;
   hits.sort((a, b) => a.ph - b.ph);
   return { phases: hits.map((h) => h.ph), xs: hits.map((h) => h.x), z: cz };
+}
+
+/** Average ground speed of a locomotion loop (m/s, character scaled to size). */
+function measureSpeed(template: Object3D, scale: number, clip: AnimationClip): number {
+  const body = cloneSkinned(template);
+  body.scale.setScalar(scale);
+  let hips: Object3D | null = null;
+  body.traverse((o) => {
+    if (!hips && /Hips$/.test(o.name)) hips = o;
+  });
+  if (!hips || clip.duration <= 0) return 0;
+  const mixer = new AnimationMixer(body);
+  mixer.clipAction(clip).play();
+  const a = new Vector3();
+  const b = new Vector3();
+  mixer.setTime(0);
+  body.updateMatrixWorld(true);
+  (hips as Object3D).getWorldPosition(a);
+  mixer.setTime(clip.duration * 0.999);
+  body.updateMatrixWorld(true);
+  (hips as Object3D).getWorldPosition(b);
+  mixer.stopAllAction();
+  return Math.hypot(b.x - a.x, b.z - a.z) / clip.duration;
 }
 
 /**
