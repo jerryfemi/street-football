@@ -65,6 +65,10 @@ body, html {
   flex: 1;
   min-height: 0;
   position: relative;
+  /* sit above the timeline so the Blend Tester drawer (inside here) is clickable,
+     and clip it so the slid-away drawer doesn't hang over the timeline */
+  z-index: 2;
+  overflow: hidden;
 }
 
 /* Panels */
@@ -521,7 +525,7 @@ body, html {
   box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.7);
   display: flex;
   flex-direction: column;
-  z-index: 50;
+  z-index: 900;
   transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
