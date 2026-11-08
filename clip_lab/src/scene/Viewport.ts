@@ -67,6 +67,9 @@ export class Viewport {
     this.scene.add(this.rootGroup);
 
     window.addEventListener('resize', () => this.resize(container));
+    // The container is built before it's attached to the page (0x0 at construction), and panels
+    // change its size later - follow the element itself, not just the window.
+    new ResizeObserver(() => this.resize(container)).observe(container);
   }
 
   private setupLights(): void {
@@ -150,6 +153,7 @@ export class Viewport {
   resize(container: HTMLElement): void {
     const w = container.clientWidth;
     const h = container.clientHeight;
+    if (w === 0 || h === 0) return;
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h);
