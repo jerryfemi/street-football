@@ -1,5 +1,5 @@
 import { Vector3, type Object3D } from 'three';
-import { BALL, BLOCK, CONTACT, DRIBBLE, GOAL, PLAYER, RESTITUTION, ROUND, SHOT, SLIDE, TACKLE } from '../config';
+import { BALL, BLOCK, CONTACT, DRIBBLE, GOAL, PLAYER, RESTITUTION, ROUND, SHOT, SLIDE, TACKLE, FREE_PLAY } from '../config';
 import { closestOnSegment, segmentsCrossXZ, type BodyPart } from '../physics/BodyColliders';
 import type { Ball } from '../ball/Ball';
 import type { DefenderAI } from '../controllers/DefenderAI';
@@ -82,6 +82,14 @@ export class Match {
     this.ball.place(_a.x, _a.z);
     this.ball.owner = this.defender;
     this.shotClock = ROUND.shotClock;
+    if (FREE_PLAY) {
+      // test mode: start live with the ball at his feet
+      this.attacker.footPoint(_a);
+      this.ball.place(_a.x, _a.z);
+      this.ball.owner = this.attacker;
+      this.setPhase('live');
+      return;
+    }
     this.setPhase('check');
     this.listener.onMessage('CHECK BALL', 'info');
   }
@@ -224,6 +232,16 @@ export class Match {
 
   private endRound(kind: 'goal' | 'defended' | 'foul', text: string): void {
     if (this.phase !== 'live') return;
+    if (FREE_PLAY) {
+      // test mode: no rounds, no score - a goal just gives him the ball back at the top
+      if (kind === 'goal') {
+        this.attacker.teleport(0, 5, Math.PI);
+        this.attacker.footPoint(_a);
+        this.ball.place(_a.x, _a.z);
+        this.ball.owner = this.attacker;
+      }
+      return;
+    }
     if (kind === 'foul') {
       // foul: no point either way, replay the round
       this.setPhase('defended');
@@ -326,9 +344,16 @@ export class Match {
         const fp = p.footPos[k];
         const lz = (fp.x - p.pos.x) * _f.x + (fp.z - p.pos.z) * _f.z;
         const prev = p.prevFootZ[k];
+        const dz = lz - prev;
+        const wasSwinging = p.prevFootDz[k] > 0;
         p.prevFootZ[k] = lz;
-        if (prev < DRIBBLE.contactZ && lz >= DRIBBLE.contactZ && fp.y < DRIBBLE.footLift + 0.1) {
-          // only a real touch if this foot is actually at the ball
+        p.prevFootDz[k] = dz;
+        // the strike: the swinging foot reaches the front of its arc, low to the ground
+        // (works at any playback speed, unlike a fixed line the foot may never cross)
+        const peak = wasSwinging && dz <= 0 && lz > DRIBBLE.peakMinZ && fp.y < DRIBBLE.footLift + 0.12;
+        // or the foot sweeping through the contact line (fast playback can skip the peak frame)
+        const cross = prev < DRIBBLE.contactZ && lz >= DRIBBLE.contactZ && fp.y < DRIBBLE.footLift + 0.1;
+        if (peak || cross) {
           if (Math.hypot(fp.x - ball.pos.x, fp.z - ball.pos.z) < DRIBBLE.footReach) beat = true;
           this.beatSeen = true;
           const lx = (fp.x - p.pos.x) * _r.x + (fp.z - p.pos.z) * _r.z;
@@ -364,7 +389,7 @@ export class Match {
       this.touches++;
       return;
     }
-    const urgent = ahead < 0.12; // he's running onto it - must touch now
+    const urgent = ahead < 0.1 || this.clock - this.lastTouchAt > 1.1; // running onto it, or overdue
 
     const ready = this.clock - this.lastTouchAt > DRIBBLE.minTouchGap;
     if (ready && ((beat && toContact < DRIBBLE.reach) || (urgent && toContact < DRIBBLE.reach + 0.2))) {
@@ -400,8 +425,30 @@ export class Match {
     // 3. TAKE
     if (!p.skillReleased && t >= def.take.t) {
       p.skillReleased = true;
-      localToWorld(p.skillOrigin, p.skillYaw, def.take.x * mx, def.take.z, _a);
-      const arrive = def.take.arriveIn ?? Math.max(0.25, (1 - def.take.t) * def.duration + 0.15);
+      const m = p.skillMotion;
+      const left = p.skillDuration * (1 - t);
+      if (def.take.toEnd && m) {
+        // to where he will be when the move ends, just in front of his final facing
+        const n = m.x.length - 1;
+        localToWorld(p.skillOrigin, p.skillYaw, m.x[n], m.z[n], _a);
+        const endYaw = p.skillYaw + m.yaw[n];
+        const lead = def.take.lead ?? 0.45;
+        _a.x += Math.sin(endYaw) * lead;
+        _a.z += Math.cos(endYaw) * lead;
+      } else {
+        localToWorld(p.skillOrigin, p.skillYaw, def.take.x * mx, def.take.z, _a);
+      }
+      const arrive = def.take.arriveIn ?? Math.max(0.25, left + 0.12);
+      if (def.take.lift) {
+        // airborne flick: straight-line flight, gravity does the arc
+        const dx = _a.x - ball.pos.x;
+        const dz = _a.z - ball.pos.z;
+        ball.kick(p, dx / arrive, def.take.lift, dz / arrive);
+        ball.noPickupTimer = 0.35;
+        p.autoChase = 1.8;
+        this.touches++;
+        return;
+      }
       this.sendBallTo(_a.x, _a.z, arrive, DRIBBLE.friction);
       if (def.take.chase) {
         ball.kick(p, ball.vel.x, 0, ball.vel.z);
@@ -486,7 +533,11 @@ export class Match {
     }
   }
 
-  /** Sharp touch: a quick cut that knocks the ball into the new direction (Dash tap + direction). */
+  /**
+   * Sharp touch (Dash tap + direction): the cut is picked by how far the new direction is from
+   * where he faces - a small push, a 45° or 90° cut, or a drag back - each a real cut animation
+   * whose own footwork moves him, with the ball taken to where he ends up.
+   */
   private sharpTouch(p: Player, dirX: number, dirZ: number): void {
     const ball = this.ball;
     if (ball.owner !== p || p.state !== 'free') return;
@@ -495,12 +546,21 @@ export class Match {
     if (Math.hypot(ball.pos.x - p.pos.x, ball.pos.z - p.pos.z) > 1.1) return;
     const nx = dirX / l;
     const nz = dirZ / l;
-    p.yaw = Math.atan2(nx, nz);
+    const fx = Math.sin(p.yaw);
+    const fz = Math.cos(p.yaw);
+    const ang = Math.acos(Math.max(-1, Math.min(1, nx * fx + nz * fz))) * (180 / Math.PI);
+    const right = -nx * fz + nz * fx > 0;
+    const id = ang < 25 ? null : ang < 65 ? 'cut_45' : ang < 120 ? 'cut_90' : 'drag_back';
+    if (id && SKILLS[id] && p.animator.has(SKILLS[id].anim)) {
+      p.startSkill(SKILLS[id], !right);
+      if (p === this.attacker) this.defenderAI.onOpponentSkill(SKILLS[id], !right);
+      this.touches++;
+      return;
+    }
+    // straight on: a longer push into space
     const sp = p.speed;
-    p.vel.set(nx * sp * 0.7, 0, nz * sp * 0.7);
-    this.sendBallTo(p.pos.x + nx * 1.6, p.pos.z + nz * 1.6, 0.45, DRIBBLE.friction);
-    p.animator.play('cut', { once: true, duration: 0.45, fade: 0.06 });
-    p.cutTimer = 0.45;
+    p.vel.set(nx * Math.max(sp, 3), 0, nz * Math.max(sp, 3));
+    this.sendBallTo(p.pos.x + nx * 1.8, p.pos.z + nz * 1.8, 0.45, DRIBBLE.friction);
     this.touches++;
   }
 
